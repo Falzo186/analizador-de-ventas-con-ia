@@ -1,0 +1,14 @@
+# Generación de datos falsos pero realistas
+faker==30.1.0
+
+# Interfaz web para hacer preguntas y ver resultados
+streamlit==1.39.0
+
+# Cliente para hablar con el modelo local servido por Ollama
+ollama==0.3.3
+
+# Manejo de datos tabulares y comparación de resultados
+pandas==2.2.3
+
+# ORM / capa de acceso a la base de datos SQLite
+sqlalchemy==2.0.35
