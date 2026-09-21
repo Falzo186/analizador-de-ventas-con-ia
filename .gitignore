@@ -6,3 +6,4 @@ data/*.db
 .streamlit/secrets.toml
 data/instacart/
 *.duckdb
+data/referencia/

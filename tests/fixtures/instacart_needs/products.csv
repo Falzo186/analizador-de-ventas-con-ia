@@ -1,0 +1,7 @@
+product_id,product_name,aisle_id,department_id
+1,Milk,5,2
+2,Bread,4,3
+3,Eggs,5,2
+4,Weird Snack,100,21
+5,Rare Item,1,1
+6,Filler Item,1,1
