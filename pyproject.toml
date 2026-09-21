@@ -8,3 +8,6 @@ requires-python = ">=3.11"
 # Permite `import src.db...` desde las pruebas ejecutando pytest en la raíz.
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: prueba contra data/instacart.duckdb real; se salta si el archivo no existe.",
+]

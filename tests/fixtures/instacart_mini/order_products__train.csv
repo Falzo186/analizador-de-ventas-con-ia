@@ -1,0 +1,6 @@
+order_id,product_id,add_to_cart_order,reordered
+204,4,1,1
+204,1,2,1
+404,1,1,1
+404,4,2,1
+404,2,3,1

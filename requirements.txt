@@ -12,3 +12,6 @@ pandas==2.2.3
 
 # ORM / capa de acceso a la base de datos SQLite
 sqlalchemy==2.0.35
+
+# Motor analítico columnar para el dataset Instacart (33M+ filas)
+duckdb==1.5.5
