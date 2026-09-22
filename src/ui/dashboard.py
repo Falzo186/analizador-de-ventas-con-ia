@@ -32,7 +32,9 @@ import pandas as pd
 import streamlit as st
 
 from src.analytics.contrato import ResultadoNecesidad
+from src.dashboard import graficas_datos as gd
 from src.dashboard import servicio
+from src.pdf import generador as pdf_generador
 
 st.set_page_config(page_title="Dashboard Instacart — Fase 3", page_icon="📊", layout="wide")
 
@@ -49,6 +51,8 @@ if "version_cache" not in st.session_state:
     st.session_state["version_cache"] = 0
 if "ultimo_refresco" not in st.session_state:
     st.session_state["ultimo_refresco"] = None
+if "ultimo_pdf" not in st.session_state:
+    st.session_state["ultimo_pdf"] = None
 
 
 @st.cache_data(show_spinner="Cargando necesidad...")
@@ -61,6 +65,14 @@ def _cargar_cacheado(necesidad_id: str, version: int) -> servicio.CargaNecesidad
 
 def cargar(necesidad_id: str) -> servicio.CargaNecesidad:
     return _cargar_cacheado(necesidad_id, st.session_state["version_cache"])
+
+
+@st.cache_data(show_spinner=False)
+def _pdf_vigente_cacheado(version: int) -> bool:
+    # Mismo motivo que `_cargar_cacheado`: `pdf_vigente()` abre su propia
+    # conexión y llama a `cargar_necesidad` x11 (barato con caché tibia,
+    # ~0.2s medido, pero no gratis en CADA rerun de Streamlit).
+    return pdf_generador.pdf_vigente(pdf_generador.OUT_PDF_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +119,7 @@ def _seguro(df: pd.DataFrame, construir):
 # ---------------------------------------------------------------------------
 
 def graficos_n1(r: ResultadoNecesidad):
-    filas = [dict(f, clasificacion="Asegurar inventario") for f in r.tablas["asegurar_inventario"]]
-    filas += [dict(f, clasificacion="Revisar/retirar") for f in r.tablas["revisar_retirar"]]
-    df = _df(filas).drop_duplicates(subset="product_id") if filas else _df(filas)
+    df = gd.datos_n1(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_circle(opacity=0.55, size=60).encode(
         x=alt.X("lineas:Q", title="Volumen (líneas, escala log)", scale=alt.Scale(type="log")),
         y=alt.Y("tasa_recompra:Q", title="Tasa de recompra", axis=alt.Axis(format="%")),
@@ -120,9 +130,7 @@ def graficos_n1(r: ResultadoNecesidad):
 
 
 def graficos_n2(r: ResultadoNecesidad):
-    df = _df(r.tablas["top_50_lift"]).head(20).copy()
-    if not df.empty:
-        df["par"] = df["producto_a_nombre"] + " + " + df["producto_b_nombre"]
+    df = gd.datos_n2(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
         x=alt.X("lift:Q", title="Lift"),
         y=alt.Y("par:N", sort="-x", title=None),
@@ -132,7 +140,7 @@ def graficos_n2(r: ResultadoNecesidad):
 
 
 def graficos_n3(r: ResultadoNecesidad):
-    df = _df(r.tablas["matriz_dow_hora"])
+    df = gd.datos_n3(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_rect().encode(
         x=alt.X("order_hour_of_day:O", title="Hora del día (0-23, anónima)"),
         y=alt.Y("order_dow:O", title="Día de la semana (0-6, anónimo)"),
@@ -143,8 +151,7 @@ def graficos_n3(r: ResultadoNecesidad):
 
 
 def graficos_n4(r: ResultadoNecesidad):
-    df = _df(r.tablas["top_50_razon"])
-    umbral = next(p.valor for p in r.parametros if p.nombre == "UMBRAL_RAZON")
+    datos = gd.datos_n4(r)
 
     def _construir(d):
         hist = alt.Chart(d).mark_bar().encode(
@@ -152,19 +159,17 @@ def graficos_n4(r: ResultadoNecesidad):
             y=alt.Y("count():Q", title="Usuarios (dentro del top 50 mostrado)"),
             tooltip=["count()"],
         )
-        regla = alt.Chart(pd.DataFrame({"umbral": [umbral]})).mark_rule(
+        regla = alt.Chart(pd.DataFrame({"umbral": [datos.umbral_razon]})).mark_rule(
             color="red", strokeDash=[5, 4], size=2
         ).encode(x="umbral:Q")
         return (hist + regla).properties(height=350)
 
-    chart = _seguro(df, _construir)
+    chart = _seguro(datos.df, _construir)
     return [("Distribución de razón (top 50 por razón) con línea de UMBRAL_RAZON", chart)]
 
 
 def graficos_n5(r: ResultadoNecesidad):
-    df = _df(r.tablas["top_50_indice_ancla"])
-    if not df.empty:
-        df = df.sort_values("indice_ancla", ascending=False).head(20)
+    df = gd.datos_n5(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
         x=alt.X("indice_ancla:Q", title="Índice ancla"),
         y=alt.Y("product_name:N", sort="-x", title=None),
@@ -174,7 +179,7 @@ def graficos_n5(r: ResultadoNecesidad):
 
 
 def graficos_n6(r: ResultadoNecesidad):
-    df = _df(r.tablas["departamentos"])
+    df = gd.datos_n6(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_circle(size=140, opacity=0.75).encode(
         x=alt.X("lineas:Q", title="Volumen (líneas)"),
         y=alt.Y("tasa_recompra:Q", title="Tasa de recompra", axis=alt.Axis(format="%")),
@@ -185,41 +190,27 @@ def graficos_n6(r: ResultadoNecesidad):
 
 
 def graficos_n7(r: ResultadoNecesidad):
-    df_k = _df(r.tablas["por_numero_pedido"])
-    linea = _seguro(df_k, lambda d: alt.Chart(d).mark_line(point=True).encode(
+    datos = gd.datos_n7(r)
+    linea = _seguro(datos.df_k, lambda d: alt.Chart(d).mark_line(point=True).encode(
         x=alt.X("k:Q", title="Número de pedido (order_number)"),
         y=alt.Y("tamano_medio:Q", title="Tamaño medio"),
         tooltip=["k", "tamano_medio", "tasa_recompra", "usuarios_n", "productos_nuevos_por_pedido"],
     ).properties(height=320))
 
-    filas_pareado = r.tablas["pareado_1_vs_10"]
-    barras = None
-    n_pareado = 0
-    if filas_pareado:
-        fila = filas_pareado[0]
-        n_pareado = fila["n_usuarios"]
-        df_pareado = pd.DataFrame([
-            {"métrica": "Tamaño", "diferencia_media": fila["diff_tamano_media"]},
-            {"métrica": "Tasa de recompra", "diferencia_media": fila["diff_tasa_recompra_media"]},
-            {"métrica": "Productos nuevos por pedido", "diferencia_media": fila["diff_productos_nuevos_media"]},
-            {"métrica": "Departamentos distintos", "diferencia_media": fila["diff_departamentos_distintos_media"]},
-        ])
-        barras = _seguro(df_pareado, lambda d: alt.Chart(d).mark_bar().encode(
-            x=alt.X("diferencia_media:Q", title="Diferencia media (pedido 10 − pedido 1)"),
-            y=alt.Y("métrica:N", title=None),
-            color=alt.condition("datum.diferencia_media >= 0", alt.value("#2a9d8f"), alt.value("#e76f51")),
-            tooltip=["métrica", "diferencia_media"],
-        ).properties(height=220))
+    barras = _seguro(datos.df_pareado, lambda d: alt.Chart(d).mark_bar().encode(
+        x=alt.X("diferencia_media:Q", title="Diferencia media (pedido 10 − pedido 1)"),
+        y=alt.Y("métrica:N", title=None),
+        color=alt.condition("datum.diferencia_media >= 0", alt.value("#2a9d8f"), alt.value("#e76f51")),
+        tooltip=["métrica", "diferencia_media"],
+    ).properties(height=220))
     return [
         ("Tamaño medio por número de pedido (k) — curva de composición, no trayectoria individual", linea),
-        (f"Comparación pareada: mismo usuario, pedido 1 vs 10 (n={n_pareado:,})", barras),
+        (f"Comparación pareada: mismo usuario, pedido 1 vs 10 (n={datos.n_usuarios_pareado:,})", barras),
     ]
 
 
 def graficos_n8(r: ResultadoNecesidad):
-    df = _df(r.tablas["histograma_indice_novedad"])
-    cortes = [v.valor for v in r.valores_clave if v.etiqueta.startswith("Corte rutinario")]
-    cortes += [v.valor for v in r.valores_clave if v.etiqueta.startswith("Corte explorador")]
+    datos = gd.datos_n8(r)
 
     def _construir(d):
         hist = alt.Chart(d).mark_bar().encode(
@@ -227,20 +218,20 @@ def graficos_n8(r: ResultadoNecesidad):
             y=alt.Y("n_usuarios:Q", title="Usuarios"),
             tooltip=["bin_decimo", "n_usuarios"],
         )
-        if len(cortes) == 2 and all(c is not None for c in cortes):
+        if datos.corte_rutinario is not None and datos.corte_explorador is not None:
             reglas = alt.Chart(pd.DataFrame({
-                "corte": [cortes[0] * 10, cortes[1] * 10],
+                "corte": [datos.corte_rutinario * 10, datos.corte_explorador * 10],
                 "tipo": ["rutinario (P25)", "explorador (P75)"],
             })).mark_rule(color="red", strokeDash=[5, 4], size=2).encode(x="corte:Q", tooltip=["tipo", "corte"])
             return (hist + reglas).properties(height=350)
         return hist.properties(height=350)
 
-    chart = _seguro(df, _construir)
+    chart = _seguro(datos.df, _construir)
     return [("Histograma de índice_novedad, con los cortes rutinario/explorador", chart)]
 
 
 def graficos_n9(r: ResultadoNecesidad):
-    df_hist = _df(r.tablas["histograma_tamano"])
+    df_hist = gd.datos_n9_histograma(r)
     hist = _seguro(df_hist, lambda d: alt.Chart(d).mark_bar().encode(
         x=alt.X("tamano_bin:Q", title="Tamaño de pedido (último bin = TAM_MAX+ agrupado)"),
         y=alt.Y("pedidos:Q", title="Pedidos"),
@@ -248,31 +239,25 @@ def graficos_n9(r: ResultadoNecesidad):
         tooltip=["tamano_bin", "pedidos", "es_cubo_final"],
     ).properties(height=320))
 
-    factores = {
-        "factor_hora": "Hora del día",
-        "factor_dia": "Día de la semana",
-        "factor_intervalo": "Intervalo desde el pedido previo",
-        "factor_numero_pedido": "Número de pedido (cubos)",
-    }
     factor_key = st.selectbox(
-        "Factor para la desviación intra-usuario", list(factores),
-        format_func=lambda k: factores[k], key="n9_factor",
+        "Factor para la desviación intra-usuario", list(gd.FACTORES_N9),
+        format_func=lambda k: gd.FACTORES_N9[k], key="n9_factor",
     )
-    df_factor = _df(r.tablas[factor_key])
+    df_factor = gd.datos_n9_factor(r, factor_key)
     barras = _seguro(df_factor, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("valor:N", title=factores[factor_key], sort=None),
+        x=alt.X("valor:N", title=gd.FACTORES_N9[factor_key], sort=None),
         y=alt.Y("desviacion_intra_usuario:Q", title="Desviación intra-usuario (productos)"),
         color=alt.condition("datum.desviacion_intra_usuario >= 0", alt.value("#2a9d8f"), alt.value("#e76f51")),
         tooltip=["valor", "desviacion_intra_usuario", "tamano_medio_bruto", "pedidos"],
     ).properties(height=320))
     return [
         ("Histograma de tamaño de pedido (naranja = cubo final, >= TAM_MAX+1)", hist),
-        (f"Desviación intra-usuario por {factores[factor_key].lower()}", barras),
+        (f"Desviación intra-usuario por {gd.FACTORES_N9[factor_key].lower()}", barras),
     ]
 
 
 def graficos_n10(r: ResultadoNecesidad):
-    df = _df(r.tablas["tasa_recompra_por_tramo"])
+    df = gd.datos_n10(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
         x=alt.X("tramo:O", title="Tramo del carrito (0=inicio ... 4=final)"),
         y=alt.Y("tasa_recompra:Q", title="Tasa de recompra", axis=alt.Axis(format="%")),
@@ -282,7 +267,7 @@ def graficos_n10(r: ResultadoNecesidad):
 
 
 def graficos_n11(r: ResultadoNecesidad):
-    df = _df(r.tablas["metricas"])
+    df = gd.datos_n11(r)
     chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
         x=alt.X("k:O", title="K"),
         xOffset="metodo:N",
@@ -346,6 +331,66 @@ if ultimo is not None:
             if e.error:
                 marca = "❌ error"
             st.write(f"**{e.id}** — {marca} ({e.duracion_s:.2f}s)" + (f" — {e.error}" if e.error else ""))
+
+
+# ---------------------------------------------------------------------------
+# PDF: mismo mecanismo de caché que las necesidades -- este botón nunca
+# recalcula una necesidad por su cuenta, solo llama a `pdf_generador.
+# generar_pdf()`, que a su vez pasa por `servicio.cargar_necesidad()` para
+# cada una (Fase 4, decisión ya tomada: no reabrir).
+# ---------------------------------------------------------------------------
+
+st.sidebar.divider()
+st.sidebar.subheader("📄 Reporte PDF")
+
+ruta_pdf = pdf_generador.OUT_PDF_DEFAULT
+pdf_existe = ruta_pdf.exists()
+pdf_vigente = _pdf_vigente_cacheado(st.session_state["version_cache"]) if pdf_existe else False
+
+if not pdf_existe:
+    st.sidebar.caption("Aún no se generó ningún PDF.")
+elif pdf_vigente:
+    st.sidebar.caption("✅ El PDF ya está actualizado: ninguna necesidad cambió desde que se generó.")
+else:
+    st.sidebar.caption("⚠️ El PDF existe, pero al menos una necesidad cambió desde que se generó (huella_bd distinta).")
+
+forzar_pdf = st.sidebar.checkbox(
+    "Recalcular las 11 necesidades antes de generar el PDF",
+    value=False, key="forzar_pdf",
+    help="Sin marcar, el PDF usa la caché de cada necesidad tal cual esté (igual que un panel); "
+         "solo recalcula lo que falte o esté rancio.",
+)
+
+if st.sidebar.button("📄 Generar/Actualizar PDF", use_container_width=True):
+    with st.sidebar.status("Generando PDF…", expanded=False) as status:
+        resumen_pdf = pdf_generador.generar_pdf(out_pdf=ruta_pdf, forzar=forzar_pdf)
+        status.update(
+            label=f"PDF listo: {resumen_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {resumen_pdf.duracion_s:.1f}s",
+            state="complete",
+        )
+    st.session_state["ultimo_pdf"] = resumen_pdf
+    st.session_state["version_cache"] += 1  # invalida _pdf_vigente_cacheado y _cargar_cacheado
+    _cargar_cacheado.clear()
+    _pdf_vigente_cacheado.clear()
+    pdf_existe = True
+
+ultimo_pdf = st.session_state["ultimo_pdf"]
+if ultimo_pdf is not None:
+    st.sidebar.success(
+        f"Generado: {ultimo_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {ultimo_pdf.duracion_s:.1f}s."
+    )
+    if ultimo_pdf.discrepancias_parametros:
+        with st.sidebar.expander(f"⚠️ {len(ultimo_pdf.discrepancias_parametros)} discrepancias JSON vs. NECESIDADES.md"):
+            for d in ultimo_pdf.discrepancias_parametros:
+                st.write(f"- {d}")
+
+if pdf_existe:
+    with open(ruta_pdf, "rb") as _fh:
+        _datos_pdf = _fh.read()
+    st.sidebar.download_button(
+        "⬇️ Descargar PDF", data=_datos_pdf, file_name=ruta_pdf.name,
+        mime="application/pdf", use_container_width=True,
+    )
 
 
 # ---------------------------------------------------------------------------

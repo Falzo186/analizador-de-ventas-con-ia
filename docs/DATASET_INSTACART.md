@@ -1,6 +1,6 @@
 # Ficha del dataset: Instacart Online Grocery Shopping Dataset 2017
 
-_Generado automáticamente por `scripts/generar_ficha_dataset.py` el 2026-09-21. No editar a mano: cada cifra viene de una consulta contra `data/instacart.duckdb`._
+_Generado automáticamente por `scripts/generar_ficha_dataset.py` el 2026-09-22. No editar a mano: cada cifra viene de una consulta contra `data/instacart.duckdb`._
 
 ## Fuente y licencia
 

@@ -15,3 +15,13 @@ sqlalchemy==2.0.35
 
 # Motor analítico columnar para el dataset Instacart (33M+ filas)
 duckdb==1.5.5
+
+# Gráficas del dashboard (Fase 3; ya se usaba, quedó sin listar aquí)
+altair==5.5.0
+
+# Generación del PDF determinista (Fase 4)
+reportlab==5.0.1
+matplotlib==3.11.2
+
+# Extracción de texto de PDF para los tests de determinismo/honestidad (Fase 4)
+pypdf==6.19.0
