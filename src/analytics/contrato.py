@@ -160,6 +160,56 @@ class ResultadoNecesidad:
         ruta.parent.mkdir(parents=True, exist_ok=True)
         ruta.write_text(self.a_json() + "\n", encoding="utf-8")
 
+    @classmethod
+    def desde_dict(cls, data: dict) -> "ResultadoNecesidad":
+        """Reconstruye un `ResultadoNecesidad` desde el dict que produce
+        `a_dict()` (p. ej. leído de `data/referencia/{id}.json`). Ignora
+        `huella_contenido` (no es un campo del dataclass, se recalcula al
+        volver a serializar) y `huella_bd.order_products_total` (propiedad
+        derivada, no almacenada). `__post_init__` revalida la consistencia
+        interna (valores_clave -> consultas, tablas -> criterio de corte) al
+        reconstruir, igual que al construirlo desde cero — sirve también
+        como chequeo de integridad de un JSON leído de disco (Fase 3,
+        `src/dashboard/servicio.py`)."""
+        u = data["universo"]
+        hb = data["huella_bd"]
+        return cls(
+            id=data["id"],
+            titulo=data["titulo"],
+            pregunta=data["pregunta"],
+            decision=data["decision"],
+            universo=Universo(texto=u["texto"], filtros=list(u["filtros"])),
+            parametros=[
+                Parametro(nombre=p["nombre"], valor=p["valor"], justificacion=p["justificacion"])
+                for p in data["parametros"]
+            ],
+            consultas=[Consulta(nombre=c["nombre"], sql=c["sql"]) for c in data["consultas"]],
+            tablas=data["tablas"],
+            tablas_criterio_corte=data["tablas_criterio_corte"],
+            valores_clave=[
+                ValorClave(
+                    etiqueta=v["etiqueta"], valor=v["valor"], unidad=v["unidad"],
+                    consulta_origen=v["consulta_origen"],
+                )
+                for v in data["valores_clave"]
+            ],
+            hallazgos=list(data["hallazgos"]),
+            limitaciones=list(data["limitaciones"]),
+            duracion_s=data["duracion_s"],
+            version_duckdb=data["version_duckdb"],
+            fecha_generacion=data["fecha_generacion"],
+            huella_bd=HuellaBD(
+                orders_total=hb["orders_total"],
+                orders_test=hb["orders_test"],
+                order_products_prior=hb["order_products_prior"],
+                order_products_train=hb["order_products_train"],
+            ),
+        )
+
+    @classmethod
+    def desde_json(cls, ruta: str | Path) -> "ResultadoNecesidad":
+        return cls.desde_dict(json.loads(Path(ruta).read_text(encoding="utf-8")))
+
 
 def _sanear(obj: Any) -> Any:
     """Reemplaza NaN/Infinity por None recursivamente (JSON no los admite)."""

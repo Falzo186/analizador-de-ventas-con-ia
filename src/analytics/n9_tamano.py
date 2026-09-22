@@ -157,8 +157,8 @@ def calcular(
         "expresa en número de productos y en % de pedidos que quedarían por debajo de ese número.",
         "El tamaño 'bruto' por factor mezcla composición de clientes (algunos usuarios siempre piden "
         "más, sin importar el factor): la desviación intra-usuario (tamaño del pedido menos el "
-        "tamaño medio de ESE usuario) controla ese efecto: es la comparación más honesta de si el "
-        "factor en sí se asocia con pedidos más grandes o chicos.",
+        "tamaño medio de ESE usuario) controla esa diferencia de composición: es la comparación más "
+        "honesta de si el factor en sí se asocia con pedidos más grandes o chicos.",
         "Descriptivo, no causal: una asociación (p. ej. pedidos más grandes cuando el intervalo "
         "previo fue largo) no implica que alargar el intervalo cause pedidos más grandes.",
         f"El cubo 'sin_intervalo_previo' agrupa el primer pedido de cada usuario (days_since_prior_order "
