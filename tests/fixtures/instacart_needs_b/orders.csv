@@ -1,0 +1,11 @@
+order_id,user_id,eval_set,order_number,order_dow,order_hour_of_day,days_since_prior_order
+101,1,prior,1,0,8,
+102,1,train,10,1,9,10
+201,2,prior,1,2,10,
+202,2,test,2,3,11,5
+301,3,prior,1,4,12,
+302,3,prior,2,5,13,7
+303,3,prior,11,6,14,20
+304,3,train,12,0,15,3
+401,4,prior,1,1,16,
+402,4,prior,2,2,17,4

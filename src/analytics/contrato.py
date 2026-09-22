@@ -11,15 +11,27 @@ consultas de este proyecto ya se escriben para devolver NULL en ese caso, no
 para producir NaN) se convierte a `None` (`null` en JSON) antes de serializar
 — ver `_sanear`. Se prefiere que la propia consulta SQL evite el NaN con
 `NULLIF`/`CASE`, pero este saneamiento es la segunda barrera, no la primera.
+
+Huella de contenido (Fase 2B, C4): `huella_contenido` es un sha256 de la
+serialización canónica (JSON con `sort_keys=True`, sin indentación) del
+resto del documento, EXCLUYENDO los campos volátiles listados en
+`CAMPOS_VOLATILES` (cambian entre corridas por diseño: `fecha_generacion`
+es un timestamp, `duracion_s` depende de la carga de la máquina). Dos
+corridas con los mismos datos y parámetros deben producir la misma huella;
+el test de determinismo la compara y además verifica que el resto del JSON
+sea idéntico byte a byte. Documentado también en docs/NECESIDADES.md.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+CAMPOS_VOLATILES: tuple[str, ...] = ("fecha_generacion", "duracion_s")
 
 
 @dataclass(frozen=True)
@@ -136,7 +148,9 @@ class ResultadoNecesidad:
                 "order_products_total": self.huella_bd.order_products_total,
             },
         }
-        return _sanear(data)
+        data = _sanear(data)
+        data["huella_contenido"] = _huella_contenido(data)
+        return data
 
     def a_json(self) -> str:
         return json.dumps(self.a_dict(), indent=2, ensure_ascii=False, sort_keys=True)
@@ -158,6 +172,14 @@ def _sanear(obj: Any) -> Any:
     if isinstance(obj, (list, tuple)):
         return [_sanear(v) for v in obj]
     return obj
+
+
+def _huella_contenido(data_sin_huella: dict) -> str:
+    """sha256 de `data_sin_huella` sin los campos de `CAMPOS_VOLATILES`, en
+    serialización canónica (sort_keys, sin indentación)."""
+    sin_volatiles = {k: v for k, v in data_sin_huella.items() if k not in CAMPOS_VOLATILES}
+    canonico = json.dumps(sin_volatiles, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonico.encode("utf-8")).hexdigest()
 
 
 def limitar_tabla(filas: list[dict], limite: int = LIMITE_FILAS_TABLA) -> tuple[list[dict], bool]:

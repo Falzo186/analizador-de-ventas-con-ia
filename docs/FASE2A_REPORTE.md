@@ -190,11 +190,22 @@ WITH elegibles AS (
 SELECT product_id, product_name, aisle, department, lineas, usuarios_distintos,
        tasa_recompra, observables, abandonos, tasa_abandono,
        aisle_missing_other, department_missing_other,
-       (lineas >= 272.0 AND tasa_recompra >= 0.7213570675495115) AS asegurar_inventario,
-       (tasa_abandono >= 0.29862579281183935 AND tasa_recompra <= 0.4906976744186046) AS revisar_retirar
+       (lineas >= 915.0 AND tasa_recompra >= 0.5783244919978421) AS asegurar_inventario,
+       (tasa_abandono >= 0.6875 AND tasa_recompra <= 0.33880965075979735) AS revisar_retirar
 FROM elegibles
 ORDER BY tasa_recompra DESC, lineas DESC, product_id ASC
 ```
+
+> **Corrección (Fase 2B):** los literales de este bloque estaban mal
+> transcritos en la redacción original de este reporte (mostraban 272.0 /
+> 0.7214 / 0.4907 / 0.2986, que son los percentiles sobre **todos** los
+> productos, no sobre los elegibles). El código de `n1_recompra.py` siempre
+> calculó los percentiles sobre el CTE `elegibles` correctamente — se
+> verificó releyendo el SQL real ejecutado por `calcular()` y confirmando
+> que `git diff` no muestra cambios en ese archivo desde este commit. Los
+> tamaños de grupo reportados (2,581 / 4,673) ya eran correctos porque
+> venían del código, no del texto de este bloque. Ver `docs/FASE2B_REPORTE.md`,
+> Paso 0b, para la verificación completa.
 
 **Primeras filas:**
 - `asegurar_inventario[0]`: `Half And Half Ultra Pasteurized` — 2,995 líneas, tasa_recompra=86.1%, observables=308, abandonos=64, tasa_abandono=20.8%.

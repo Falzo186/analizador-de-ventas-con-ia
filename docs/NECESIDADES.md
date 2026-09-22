@@ -4,7 +4,17 @@ Documento de referencia para `src/analytics/`. Cada necesidad declara su
 propio universo, y ningún número de este documento se copia a mano: los
 valores citados abajo son los medidos al construir los agregados y al
 calcular cada necesidad contra `data/instacart.duckdb` (ver
-`docs/FASE2A_REPORTE.md` para la evidencia completa comando por comando).
+`docs/FASE2A_REPORTE.md` para N1-N6 y `docs/FASE2B_REPORTE.md` para las
+correcciones C1-C5 y N7-N11, evidencia completa comando por comando).
+
+**Campos volátiles (C4, huella de contenido):** cada `ResultadoNecesidad`
+incluye `huella_contenido` (sha256 de la serialización canónica del resto
+del JSON). Los campos EXCLUIDOS de ese hash porque cambian entre corridas
+por diseño (no porque el resultado sea distinto) son `fecha_generacion`
+(timestamp de la corrida) y `duracion_s` (depende de la carga de la
+máquina). Cualquier otro campo debe ser idéntico byte a byte entre dos
+corridas con los mismos datos y parámetros; `tests/test_analytics_
+determinismo.py` lo verifica sobre las 11 necesidades.
 
 **Universos comunes** (declarados también dentro de cada `ResultadoNecesidad`):
 - **Líneas** = filas de la vista `order_products` (`order_products__prior`
@@ -125,7 +135,7 @@ anormalmente largo frente a su propio patrón?
 para cualquier `eval_set`); 206,209 usuarios.
 
 **Métricas:**
-- `intervalo_típico` = mediana de `days_since_prior_order` del usuario (valores no nulos).
+- `intervalo_típico` = mediana de `days_since_prior_order` del usuario, **excluyendo el intervalo de su último pedido** (solo intervalos previos). Corrección C1 (Fase 2B): antes incluía ese mismo intervalo en su propia mediana de referencia, lo que sesgaba "típico" hacia "último" y diluía la señal de anomalía — ver `docs/FASE2B_REPORTE.md`.
 - `intervalo_último` = valor de `days_since_prior_order` en el pedido con `order_number` máximo del usuario.
 - `razón` = último / max(típico, 1).
 - `en_riesgo` = razón ≥ `UMBRAL_RAZON` **y** (último − típico) ≥ `UMBRAL_DIAS`.
@@ -133,17 +143,22 @@ para cualquier `eval_set`); 206,209 usuarios.
 **Parámetros:**
 | Parámetro | Valor | Justificación medida |
 |---|---|---|
-| `MIN_INTERVALOS` | 5 | Intervalos no nulos por usuario (universo completo de orders): 100.0% tienen ≥3, 78.9% tienen ≥5, 49.3% tienen ≥10. |
-| `UMBRAL_RAZON` | 2.0 | Razón entre usuarios elegibles: mediana=1.00, P75=1.62, P90=2.61. 2.0 cae entre P75 y P90: selectivo sin ser extremo. |
+| `MIN_INTERVALOS` | 5 | Intervalos PREVIOS al último por usuario (universo completo de orders): 100.0% tienen ≥3 previos, 71.0% tienen ≥5, 45.5% tienen ≥10 (antes de C1, contando el intervalo del último pedido: 100.0%/78.9%/49.3% — ver antes/después en `docs/FASE2B_REPORTE.md`). |
+| `UMBRAL_RAZON` | 2.0 | Razón entre usuarios elegibles (post-C1): mediana=1.08, P75=1.83, P90=3.00. 2.0 cae entre P75 y P90: selectivo sin ser extremo. |
 | `UMBRAL_DIAS` | 5 | Complementa a UMBRAL_RAZON para no marcar como riesgo diferencias triviales cuando el típico es muy corto. |
 
 **Censura:** 11.49% de los 3,214,874 intervalos no nulos del dataset valen
-exactamente 30 (tope). De los usuarios "en riesgo", 56.2% tienen su último
-intervalo censurado en 30 (su intervalo real podría ser mayor).
+exactamente 30 (tope). De los usuarios "en riesgo" (post-C1), 55.7% tienen
+su último intervalo censurado en 30 (su intervalo real podría ser mayor).
 
 **Sensibilidad:** se probaron 4 combinaciones de umbral (razón≥1.5/días≥3,
-2.0/5, 2.5/7, 3.0/10); 11.1% de los usuarios evaluables se marcan "en
-riesgo" en al menos 3 de las 4.
+2.0/5, 2.5/7, 3.0/10); 14.0% de los usuarios evaluables (post-C1) se marcan
+"en riesgo" en al menos 3 de las 4.
+
+**Invariante (C5, reforzado):** usuarios evaluables + excluidos por
+MIN_INTERVALOS = 206,209, verificado con dos consultas SQL independientes
+entre sí (`tests/test_analytics_integration.py::
+test_n4_evaluables_mas_excluidos_reconcilia`).
 
 **Limitación central:** no existe una fecha actual en este dataset: se
 detecta un intervalo reciente anormalmente largo *respecto al patrón propio*
@@ -163,14 +178,21 @@ de lo que su popularidad explicaría?
 - `tasa_primero` = veces con `add_to_cart_order=1` / apariciones del producto.
 - `tasa_esperada` = promedio, sobre las apariciones del producto, de 1/tamaño_del_pedido (control por tamaño de pedido).
 - `índice_ancla` = tasa_primero / tasa_esperada.
+- `usuarios_distintos` / `usuarios_primero` (Corrección C2, Fase 2B): cuántos usuarios distintos compraron el producto alguna vez, y cuántos lo tuvieron en posición 1 al menos una vez.
 
-**Parámetro:**
+**Parámetros:**
 | Parámetro | Valor | Justificación medida |
 |---|---|---|
 | `MIN_APARICIONES` | 50 | Misma distribución que MIN_LINEAS en N1 (apariciones = líneas por producto): 54.7% de los productos, 98.7% de las líneas. |
+| `MIN_USUARIOS_ANCLA` (C2) | 10 | `usuarios_primero` entre los 42,188 productos que fueron primero alguna vez: min=1, P25=2, mediana=6, P75=22. 10 cae entre la mediana y P75: exige que la señal de "ancla" venga de al menos 10 usuarios distintos, no de uno solo comprándolo repetidamente. |
+
+**Elegibilidad (post-C2):** `apariciones >= MIN_APARICIONES` **y**
+`usuarios_primero >= MIN_USUARIOS_ANCLA` (antes de C2 solo exigía
+MIN_APARICIONES; el antes/después del top 10 y del top 50 está en
+`docs/FASE2B_REPORTE.md`).
 
 **Tablas:** top 50 por `veces_primero` (volumen, sobre todos los productos);
-top 50 por `índice_ancla` (entre elegibles, `apariciones >= MIN_APARICIONES`).
+top 50 por `índice_ancla` (entre elegibles).
 
 **Limitación:** el orden de agregado al carrito puede reflejar la interfaz
 (p. ej. listas de "comprar de nuevo" que precargan productos habituales), no
@@ -206,8 +228,180 @@ líneas y tasa de recompra, no en margen ni ingreso.
 
 ---
 
-## Fase 2B (pendiente)
+## N7 — Evolución por número de pedido
 
-N7 (evolución por número de pedido), N8 (rutinarios vs. exploradores), N9
-(tamaño de pedido), N10 (final del carrito/impulso) y N11 (predicción del
-siguiente pedido, baseline determinista) quedan fuera de esta fase.
+**Pregunta:** ¿cómo cambian tamaño, variedad y recompra a lo largo de la
+"vida" de un usuario, pedido a pedido?
+**Decisión:** qué ofrecer a clientes nuevos (solo descriptivo, nada causal).
+
+**Universo:** pedidos con líneas, agrupados por `order_number=k`.
+
+**Métricas por k** (solo si `usuarios_n >= MIN_USUARIOS_K`): tamaño medio y
+mediana, `tasa_recompra`, `productos_nuevos_por_pedido` (líneas
+`reordered=0`), `departamentos_distintos_por_pedido`.
+
+**Composición vs. pareado:** la curva por k mezcla usuarios distintos (solo
+llegan a k alto quienes tienen muchos pedidos) — es descriptiva, no una
+trayectoria de un mismo cliente. El **análisis pareado** (mismo usuario,
+pedido 1 y pedido 10, diferencia media con n y desvío) es la comparación
+válida de "primer vs décimo pedido" que pide el brief.
+
+**Parámetro:**
+| Parámetro | Valor | Justificación medida |
+|---|---|---|
+| `MIN_USUARIOS_K` | 100 | Usuarios con al menos k pedidos-con-líneas cae de 206,209 (k=1) a 867 (k=100, el máximo del dataset). Piso convencional de muestra de tres cifras; en este dataset ni siquiera k=100 lo viola, así que no descarta ningún k en la práctica, pero deja el criterio explícito. |
+
+**Medido, no asumido:** 0 de 2,078,068 líneas en order_number=1 tienen
+`reordered=1` (0.0000%) — se reporta en limitaciones, no se asume.
+
+**Invariantes:** suma de pedidos por k (TODOS los k) = 3,346,083; suma de
+líneas = 33,819,106.
+
+**Rendimiento:** el pipeline en vivo (curva por k + pareado) tarda varios
+segundos bajo `threads=1`/4GB por presión de memoria; se precalcula en
+`agg_n7_por_k` / `agg_n7_pareado` / `agg_n7_reordered_k1` (construidos en
+`agregados.py`, que corre multi-hilo sin ese problema — ver
+`docs/FASE2B_REPORTE.md`).
+
+---
+
+## N8 — Rutinarios vs exploradores
+
+**Pregunta:** ¿qué usuarios repiten casi siempre los mismos productos y
+cuáles prueban variedad, controlando por exposición?
+**Decisión:** a quién ofrecer suscripción/"repetir pedido" y a quién
+mostrar novedades.
+
+**Universo:** usuarios con `>= W` pedidos con líneas. **Ventana fija:**
+solo los primeros W pedidos con líneas de cada usuario, para que quien
+tiene más historial no "gane" variedad solo por tener más oportunidades.
+
+**Métrica:** `índice_novedad` = productos_distintos / líneas en la
+ventana (1 = nunca repite; cerca de 0 = siempre lo mismo). Clasificación
+por percentiles (P25 rutinario, P75 explorador) — tamaños de grupo fijos
+por construcción, por eso se reporta también el histograma completo y los
+cortes absolutos.
+
+**Parámetros:**
+| Parámetro | Valor | Justificación medida |
+|---|---|---|
+| `W` | 5 | Usuarios con >=W pedidos con líneas: W=3→100.0%, W=5→84.9% (175,072 de 206,209), W=10→52.1%, W=20→25.6%. W=5 cubre a la gran mayoría sin exigir un historial tan largo como W=10. |
+| `percentil_rutinario` / `percentil_explorador` | 0.25 / 0.75 | Cuartiles estándar de índice_novedad. |
+
+**Consistencia medida:** en qué fracción de usuarios `productos_distintos`
+coincide exactamente con el número de líneas `reordered=0` en la ventana
+(se verifica, no se asume).
+
+**Confusor:** correlación de Pearson entre índice_novedad y tamaño medio de
+pedido (pedidos más grandes tienen más oportunidades de producto nuevo).
+
+**Invariante:** usuarios clasificados + excluidos por W = 206,209.
+
+---
+
+## N9 — Tamaño de pedido
+
+**Pregunta:** ¿cómo se distribuye el tamaño del pedido y qué factores se
+asocian con pedidos más grandes o más chicos?
+**Decisión:** umbral de incentivo/envío gratis expresado en NÚMERO DE
+PRODUCTOS (sin precios en el dataset, nunca en montos). Descriptivo, no causal.
+
+**Universo:** pedidos con líneas.
+
+**Métricas:** histograma exacto 1..TAM_MAX + cubo `>=TAM_MAX+1`; media,
+mediana, moda, P75, P90; % de pedidos con tamaño `<= k` para una lista de k
+candidatos. Por factor (hora, día, intervalo desde el pedido previo,
+order_number en cubos): tamaño medio bruto y **desviación intra-usuario**
+(tamaño − media de ESE usuario, promediada por cubo) — el bruto mezcla
+composición de clientes, el intra-usuario la controla.
+
+**Parámetros:**
+| Parámetro | Valor | Justificación medida |
+|---|---|---|
+| `TAM_MAX` | P99 del tamaño de pedido (35) | Percentil 99, medido en vivo; el histograma exacto llega hasta ahí. |
+| `k_candidatos` | (5, 10, 15, 20) | Umbrales candidatos en número de productos para "% de pedidos por debajo de". |
+| `MIN_PEDIDOS` | 5 | Mínimo de pedidos con líneas por usuario para entrar al cálculo de desviación intra-usuario (su propio promedio sería poco confiable con muy pocos pedidos); cubre 175,072 usuarios. |
+
+**Invariantes:** suma del histograma = 3,346,083 pedidos; suma de
+tamaño×pedidos = 33,819,106.
+
+---
+
+## N10 — Final del carrito / impulso
+
+**Pregunta:** ¿qué productos se agregan sistemáticamente al final del
+carrito, más de lo que el tamaño del pedido explicaría?
+**Decisión:** qué poner cerca de "caja" (pantalla final) o como sugerencia
+de último momento.
+
+**Universo:** líneas de pedidos con tamaño `>= MIN_TAM` (pedidos de 1
+producto no tienen posición relativa: dividir por tamaño-1=0). Líneas de
+pedidos menores se reportan como excluidas con su conteo.
+
+**Métricas:** `pos_norm = (add_to_cart_order-1)/(tamaño-1)`, 5 tramos de
+igual ancho (último cerrado [0.8,1.0]); tasa de recompra por tramo, global
+y por departamento. `share_final` = apariciones en el último tramo /
+apariciones; `esperado_final` calculado exacto por aparición (mismo enfoque
+que N5); `índice_final` = share_final / esperado_final.
+
+**Parámetros:**
+| Parámetro | Valor | Justificación medida |
+|---|---|---|
+| `MIN_TAM` | 2 | Mínimo por definición (pos_norm indefinido en pedidos de 1 producto). Cobertura medida: 3,182,490 de 3,346,083 pedidos (95.1%), 33,655,513 de 33,819,106 líneas (99.5%). |
+| `MIN_APARICIONES` | 50 | Mismo criterio que N1/N5: muestra mínima para estimar share_final/índice_final. |
+| `MIN_USUARIOS` | 10 | Evita que la señal de "producto de cierre" venga de muy pocos usuarios recurrentes. |
+| `percentil_tasa_baja` | 0.25 | Cuartil inferior de tasa_recompra entre elegibles, para aislar candidatos de impulso puro. |
+
+**Tablas:** top 50 por índice_final (todos los productos); top 50 por
+índice_final entre elegibles con tasa_recompra baja.
+
+**Invariante:** líneas incluidas + excluidas = 33,819,106.
+
+**Limitación explícita:** el orden de agregado al carrito puede reflejar la
+interfaz (listas de "comprar de nuevo" primero), así que "impulso" es
+hipótesis, no hecho.
+
+---
+
+## N11 — Predicción del siguiente pedido (baseline determinista, sin ML)
+
+**Pregunta:** ¿qué tan bien predice un baseline determinista
+(frecuencia+recencia, sin ML) los productos del siguiente pedido?
+**Decisión:** referencia de piso para comparar contra el LLM más adelante.
+
+**Universo:** los 131,209 usuarios cuyo pedido `eval_set='train'` es la
+observación objetivo; se predice usando solo sus pedidos `prior`. Los
+75,000 usuarios `test` no tienen respuesta conocida y no se evalúan.
+
+**Score:** `score(u,p,DECAY) = Σ DECAY^d` sobre pedidos prior de u que
+contienen p, dividido por `Σ DECAY^d` sobre TODOS los pedidos prior de u,
+con `d = order_number del último prior − order_number del pedido`.
+Desempate determinista: score desc, pedido más reciente, product_id asc.
+
+**Validación sin fuga:** `user_id % 5 = 0` = validación (20%, solo para
+elegir DECAY); el 80% restante es evaluación, donde se reporta el
+resultado final (también se reporta en validación, para exhibir el
+optimismo de medir donde se eligió el parámetro).
+
+**Parámetros:**
+| Parámetro | Valor | Justificación medida |
+|---|---|---|
+| `DECAY` candidatos | 1.0, 0.9, 0.8, 0.7 | Rango convencional de decaimiento exponencial suave a fuerte (1.0 = frecuencia pura). |
+| `DECAY` elegido | por hit_rate@10 en validación | Elegido sin mirar el conjunto de evaluación (ver tabla comparativa en `docs/FASE2B_REPORTE.md`). |
+| `K` evaluados | 5, 10, 20 | Los tres valores pedidos por el brief. |
+
+**Métricas:** hit-rate, recall@K y precision@K macro, para K∈{5,10,20},
+más TECHO alcanzable (% de líneas objetivo cuyo producto ya estaba en el
+historial prior — medido con el historial, no con el flag `reordered`).
+Baselines de contexto con las mismas métricas: top-K populares globales y
+repetir el último pedido prior.
+
+**Interfaz reutilizable:** `predecir_usuario(user_id, k)` devuelve
+producto, score y componentes (frecuencia, recencia), leyendo el agregado.
+
+**Invariantes:** usuarios evaluados + excluidos (validación) = 131,209;
+suma de líneas objetivo = 1,384,617.
+
+**Rendimiento:** construir el score/ranking para 131,209 usuarios sobre
+~13M líneas prior no cabe en 5s en vivo bajo `threads=1`; se precalcula en
+`agg_n11_score`/`agg_n11_rank` (armados multi-hilo en `agregados.py`).

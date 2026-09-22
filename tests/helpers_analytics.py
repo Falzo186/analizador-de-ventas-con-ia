@@ -44,3 +44,21 @@ def abrir(db_path: Path) -> duckdb.DuckDBPyConnection:
     con.execute("SET memory_limit='4GB'")
     con.execute("SET threads=1")
     return con
+
+
+# --- Fixture de Fase 2B (N7-N11): tests/fixtures/instacart_needs_b/ --------
+FIXTURE_DIR_B = Path(__file__).parent / "fixtures" / "instacart_needs_b"
+
+
+def construir_fixture_b(tmp_path: Path) -> tuple[Path, Path]:
+    """Construye la BD fuente y su agregado de la fixture de Fase 2B."""
+    src = tmp_path / "needs_b.duckdb"
+    agg = tmp_path / "needs_b_agg.duckdb"
+    construir_duckdb(FIXTURE_DIR_B, src)
+    construir_agregados(
+        src, agg,
+        min_soporte_producto=MIN_SOPORTE_PRODUCTO_TEST,
+        min_pares_lift=MIN_PARES_LIFT_TEST,
+        k_post=K_POST_TEST,
+    )
+    return src, agg

@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from src.analytics.registro import NECESIDADES
+from src.analytics.registro import NECESIDADES, NECESITA_AGREGADO
 from tests.helpers_analytics import construir_fixture, abrir
 
 
@@ -21,7 +21,7 @@ def resultados(tmp_path_factory):
     con = abrir(src)
     out = {}
     for nid, fn in NECESIDADES.items():
-        if nid in ("N1", "N2"):
+        if nid in NECESITA_AGREGADO:
             out[nid] = fn(con, agg)
         else:
             out[nid] = fn(con)
@@ -65,6 +65,16 @@ def test_tablas_no_exceden_500_filas(resultados, nid):
     for nombre, filas in res.tablas.items():
         assert len(filas) <= 500, f"{nid}: tabla '{nombre}' tiene {len(filas)} filas"
         assert nombre in res.tablas_criterio_corte
+
+
+@pytest.mark.parametrize("nid", sorted(NECESIDADES))
+def test_huella_contenido_es_sha256_valido(resultados, nid):
+    # C4: huella_contenido debe ser un sha256 hex (64 caracteres) y no debe
+    # cambiar si se recalcula sobre el mismo dict ya construido.
+    data = resultados[nid].a_dict()
+    huella = data["huella_contenido"]
+    assert isinstance(huella, str) and len(huella) == 64
+    assert all(c in "0123456789abcdef" for c in huella)
 
 
 @pytest.mark.parametrize("nid", sorted(NECESIDADES))

@@ -236,18 +236,26 @@ def test_n4_usuario3_en_riesgo_y_censurado(dbs):
 
 
 def test_n4_usuario4_incluye_intervalo_de_pedido_test(dbs):
+    # [Fase 2B, C1] típico ahora excluye el intervalo del ÚLTIMO pedido del
+    # usuario (antes se incluía en su propia mediana). Con min_intervalos=3
+    # como en la corrida original, user4 solo tiene 2 intervalos PREVIOS
+    # ([7,8], excluyendo el 9 del pedido 'test' que es el último) y queda
+    # excluido. Se baja a min_intervalos=2 para poder seguir observando su
+    # fila y verificar la fórmula corregida.
     con, agg = dbs
-    res = n4_frecuencia.calcular(con, min_intervalos=3, umbral_razon=2, umbral_dias=5)
+    res = n4_frecuencia.calcular(con, min_intervalos=2, umbral_razon=2, umbral_dias=5)
 
     # user4: pedidos 401(#1,NULL),402(#2,7),403(#3,8),404(#4,test,9).
     # N4 usa TODA la tabla orders sin filtrar eval_set: el intervalo del
-    # pedido 'test' (9) SÍ cuenta. típico=mediana([7,8,9])=8.
+    # pedido 'test' (9) SÍ cuenta como 'último' (es el order_number máximo).
+    # típico = mediana de los PREVIOS a él = mediana([7,8]) = 7.5 (ya NO
+    # incluye el 9 propio del último pedido).
     # último = valor en order_number máximo (4, el pedido test) = 9.
-    # razón = 9/8 = 1.125 -> no en riesgo (umbral_razon=2).
+    # razón = 9/7.5 = 1.2 -> no en riesgo (umbral_razon=2).
     fila = next(f for f in res.tablas["top_50_razon"] if f["user_id"] == 4)
-    assert fila["tipico"] == pytest.approx(8.0)
+    assert fila["tipico"] == pytest.approx(7.5)
     assert fila["ultimo"] == 9
-    assert fila["razon"] == pytest.approx(1.125)
+    assert fila["razon"] == pytest.approx(1.2)
     assert fila["censurado"] is False
 
 
@@ -264,13 +272,15 @@ def test_n4_usuario2_excluido_por_min_intervalos(dbs):
 
 def test_n5_producto1_ancla_perfecto(dbs):
     con, agg = dbs
-    res = n5_ancla.calcular(con, min_apariciones=1)
+    res = n5_ancla.calcular(con, agg, min_apariciones=1, min_usuarios_ancla=1)
 
     # Producto 1: 8 apariciones, SIEMPRE add_to_cart_order=1 -> tasa_primero=1.0.
     # tasa_esperada = promedio de 1/tam_pedido sobre sus 8 apariciones:
     # pedidos 101(2),102(2),103(2),104(1),105(3),107(2),108(1),203(1)
     # -> (1/2+1/2+1/2+1/1+1/3+1/2+1/1+1/1)/8 = (0.5*5 + 1*3 + 1/3)/8
     #    = (2.5+3+0.333...)/8 = 5.8333.../8 = 0.729166...
+    # [Fase 2B, C2] usuarios_distintos: compraron producto 1 los usuarios 1 y
+    # 2 -> 2. usuarios_primero: ambos lo tuvieron en ato=1 alguna vez -> 2.
     fila = next(f for f in res.tablas["top_50_volumen"] if f["product_id"] == 1)
     assert fila["apariciones"] == 8
     assert fila["veces_primero"] == 8
@@ -278,11 +288,13 @@ def test_n5_producto1_ancla_perfecto(dbs):
     tasa_esperada_calculada = (0.5 + 0.5 + 0.5 + 1 + 1 / 3 + 0.5 + 1 + 1) / 8
     assert fila["tasa_esperada"] == pytest.approx(tasa_esperada_calculada)
     assert fila["indice_ancla"] == pytest.approx(1.0 / tasa_esperada_calculada)
+    assert fila["usuarios_distintos"] == 2
+    assert fila["usuarios_primero"] == 2
 
 
 def test_n5_veces_primero_total_reconcilia_con_pedidos_con_lineas(dbs):
     con, agg = dbs
-    res = n5_ancla.calcular(con, min_apariciones=1)
+    res = n5_ancla.calcular(con, agg, min_apariciones=1, min_usuarios_ancla=1)
     vc = {v.etiqueta: v.valor for v in res.valores_clave}
     # Cada pedido con líneas tiene exactamente un primer artículo -> la suma
     # de veces_primero debe ser igual al número de pedidos con líneas (20).

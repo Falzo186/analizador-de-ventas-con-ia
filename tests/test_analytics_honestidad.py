@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from src.analytics.registro import NECESIDADES
+from src.analytics.registro import NECESIDADES, NECESITA_AGREGADO
 from tests.helpers_analytics import construir_fixture, abrir
 
 PATRON_PROHIBIDO = re.compile(r"ingres|dinero|ganancia|precio|revenue|\$|USD|MXN", re.IGNORECASE)
@@ -22,7 +22,7 @@ def resultados(tmp_path_factory):
     con = abrir(src)
     out = {}
     for nid, fn in NECESIDADES.items():
-        out[nid] = fn(con, agg) if nid in ("N1", "N2") else fn(con)
+        out[nid] = fn(con, agg) if nid in NECESITA_AGREGADO else fn(con)
     con.close()
     return out
 

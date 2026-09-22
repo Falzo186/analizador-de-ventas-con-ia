@@ -87,10 +87,36 @@ def test_n4_cubre_todos_los_usuarios(con):
 
 
 @pytest.mark.skipif(_FALTAN, reason=_RAZON)
+def test_n4_evaluables_mas_excluidos_reconcilia(con):
+    # C5: refuerzo del invariante evaluables + excluidos = 206,209, con DOS
+    # consultas independientes entre sí y de las que usa n4_frecuencia.calcular():
+    # (a) el total de usuarios directamente de orders, (b) el conteo de
+    # usuarios con >=MIN_INTERVALOS(5) intervalos previos a su último pedido,
+    # calculado aquí desde cero (no reutiliza n4_elegibles del módulo).
+    total = con.execute("SELECT COUNT(DISTINCT user_id) FROM orders").fetchone()[0]
+    n_con_suficientes_previos = con.execute("""
+        WITH max_on AS (
+            SELECT user_id, MAX(order_number) AS max_on FROM orders GROUP BY user_id
+        )
+        SELECT COUNT(*) FROM (
+            SELECT o.user_id, COUNT(*) AS n
+            FROM orders o JOIN max_on m ON m.user_id = o.user_id
+            WHERE o.days_since_prior_order IS NOT NULL AND o.order_number <> m.max_on
+            GROUP BY o.user_id
+        ) WHERE n >= 5
+    """).fetchone()[0]
+
+    res = invocar("N4", con)
+    vc = {v.etiqueta: v.valor for v in res.valores_clave}
+    assert vc["Usuarios evaluables"] == n_con_suficientes_previos
+    assert vc["Usuarios evaluables"] + vc["Usuarios excluidos por MIN_INTERVALOS"] == total == 206_209
+
+
+@pytest.mark.skipif(_FALTAN, reason=_RAZON)
 def test_n5_suma_veces_primero_igual_pedidos_con_lineas(con):
     esperado = con.execute(
         "SELECT COUNT(*) FROM orders WHERE eval_set IN ('prior', 'train')"
     ).fetchone()[0]
-    res = invocar("N5", con)
+    res = invocar("N5", con, AGG_PATH)
     vc = {v.etiqueta: v.valor for v in res.valores_clave}
     assert vc["Veces_primero total (= pedidos con líneas)"] == esperado == 3_346_083
