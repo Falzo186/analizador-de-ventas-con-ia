@@ -1,13 +1,13 @@
 # ventia: Instacart con IA local
 
-Web app de dos paneles sobre **The Instacart Online Grocery Shopping
+Web app sobre **The Instacart Online Grocery Shopping
 Dataset 2017** (pedidos reales de supermercado en línea):
 
-- **Izquierda: chat con una IA local** (Ollama). Traduce la pregunta en
+- **Chat con una IA local** (Ollama). Traduce la pregunta en
   español a SQL de solo lectura, la ejecuta contra los datos reales y
   redacta la respuesta en streaming. El SQL queda visible en cada turno y
   el historial se conserva durante la sesión.
-- **Derecha: dashboard de 11 necesidades analíticas** (N1-N11: recompra,
+- **Dashboard de 11 necesidades analíticas** (N1-N11: recompra,
   canasta, picos de demanda, frecuencia, productos ancla, departamentos,
   evolución, rutinarios/exploradores, tamaño de pedido, impulso y
   predicción del siguiente pedido), con gráficas, valores clave y la
@@ -66,11 +66,16 @@ ollama pull qwen2.5-coder:1.5b                    # modelo por defecto del chat
 Todo lo que se genera (`data/*.duckdb`, `data/referencia/`, `data/cache/`,
 `data/pdf/`) está en `.gitignore`.
 
-## Correr la app de dos paneles
+## Correr la app
 
 ```bash
 .venv/bin/streamlit run src/ui/app_instacart.py
 ```
+
+Arriba del área principal hay dos íconos, **💬** (chat) y **📊**
+(dashboard), que alternan qué vista ocupa la pantalla. El activo se ve
+resaltado. La barra lateral lista las 11 necesidades como fijados: un clic
+abre el dashboard en esa necesidad.
 
 - **Dashboard standalone** (sin chat): `.venv/bin/streamlit run src/ui/dashboard.py`
 - **Chat por línea de comandos**: `.venv/bin/python -m src.llm.responder_instacart "¿Cuántos pedidos hay en total?"`
@@ -194,13 +199,16 @@ documento enlazado.
   cálculo que no está en el resultado) y sustituirla por el reintento o la
   plantilla. Es un falso positivo seguro.
 
-**De la interfaz** (ver [Fase 6](docs/FASE6_REPORTE.md), sección 5):
-- **Los paneles no son concurrentes.** Streamlit ejecuta un solo script a
-  la vez por sesión:
-  - si tocas el dashboard mientras el chat genera, el cambio espera a que
-    el chat termine;
-  - si mandas una pregunta mientras se genera el PDF, el PDF se escribe
-    pero se pierde su mensaje de confirmación.
+**De la interfaz** (ver [Fase 8](docs/FASE8_REPORTE.md), secciones 2 y 3):
+- **No hay concurrencia real.** Streamlit ejecuta un solo script a la vez
+  por sesión, y cambiar de vista es un rerun completo:
+  - si cambias al dashboard con una respuesta en proceso, esa respuesta
+    **se cancela y se vuelve a generar desde el principio** al regresar al
+    chat (en la medición se desperdiciaron 1-2 llamadas a Ollama). La
+    pregunta no se pierde y ambas vistas lo avisan;
+  - si cambias al chat mientras se genera el PDF, el PDF se escribe igual,
+    pero se pierde su mensaje de confirmación y el cambio de vista tarda
+    unos segundos.
 
 **Del rendimiento** (ver [Fase 1](docs/FASE1_REPORTE.md) y [Fase 3](docs/FASE3_REPORTE.md)):
 - Los paneles se sirven desde caché (`data/referencia/`, invalidada por la
@@ -221,7 +229,8 @@ documento enlazado.
 | 4 | PDF determinista sin IA, integrado al dashboard | `fb3a697` | [`FASE4_REPORTE.md`](docs/FASE4_REPORTE.md) |
 | 5 | IA local sobre Instacart: esquema leído de la base, guardas reales, reintento, benchmark de 3 modelos y modelo por defecto `qwen2.5-coder:1.5b` | `f7ccb28` | [`FASE5_REPORTE.md`](docs/FASE5_REPORTE.md) |
 | 6 | App de dos paneles, chat con streaming e historial, validación de cifras | `a92c9db` | [`FASE6_REPORTE.md`](docs/FASE6_REPORTE.md) |
-| 7 | Retiro de Northwind y del simulador a `legacy/`, limpieza de dependencias y este README | ver `git log` | [`FASE7_REPORTE.md`](docs/FASE7_REPORTE.md) |
+| 7 | Retiro de Northwind y del simulador a `legacy/`, limpieza de dependencias y este README | `57d3a86` | [`FASE7_REPORTE.md`](docs/FASE7_REPORTE.md) |
+| 8 | Interfaz de vista alternante estilo Claude.ai: íconos 💬/📊 y necesidades fijadas en la barra lateral | ver `git log` | [`FASE8_REPORTE.md`](docs/FASE8_REPORTE.md) |
 
 El código de la etapa anterior (chat sobre Northwind, simulador de ventas
 sintéticas y evaluador del banco de Northwind) está archivado en

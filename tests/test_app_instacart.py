@@ -89,12 +89,15 @@ def _textos(at: AppTest) -> str:
 # Layout
 # ---------------------------------------------------------------------------
 
-def test_layout_de_dos_columnas_chat_izquierda_dashboard_derecha(app):
+def test_layout_vista_alternante_arranca_en_chat_a_todo_el_ancho(app):
+    # Fase 8: reemplaza a test_layout_de_dos_columnas_chat_izquierda_dashboard_derecha
+    # (Fase 6). Ya no hay dos columnas: arranca en la vista de chat y el
+    # dashboard NO está en pantalla hasta elegirlo.
     at = app(ModeloSimulado([], []))
-    izquierda, derecha = at.columns[0], at.columns[1]
-    assert any("Pregúntale a la IA" in s.value for s in izquierda.subheader)
-    assert [r.label for r in derecha.radio] == ["Necesidad"]
-    assert any(b.label == "📄 Generar/Actualizar PDF" for b in derecha.button)
+    assert at.session_state["vista"] == "chat"
+    assert any("Pregúntale a la IA" in s.value for s in at.subheader)
+    assert not at.radio, "el selector del dashboard no debe estar en la vista de chat"
+    assert not any(b.label == "📄 Generar/Actualizar PDF" for b in at.button)
     assert not at.sidebar.radio, "el dashboard no debe quedar en la barra lateral"
 
 
@@ -182,8 +185,11 @@ def test_dashboard_sigue_funcionando_dentro_de_la_app(app):
         ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
     )), "¿Cuántos pedidos hay?")
 
+    # Fase 8: antes usaba at.columns[1] (panel derecho de la Fase 6); ahora
+    # se entra a la vista de dashboard con el ícono 📊.
+    at.button(key="vista_dashboard").click().run()
     for nid in ("N3", "N9", "N11"):
-        at.columns[1].radio[0].set_value(nid).run()
+        at.radio(key="necesidad_sel").set_value(nid).run()
         assert not list(at.exception), f"{nid}: {list(at.exception)}"
         assert any(t.value.startswith(f"{nid} —") for t in at.title)
         assert at.metric
@@ -266,3 +272,117 @@ def test_redaccion_en_stream_entrega_fragmentos_y_luego_valida(ollama_que_transm
     resto = list(generador)
     assert "".join([fragmentos[0], *resto]) == "Hay 21 pedidos en total."
     assert res.respuesta == "Hay 21 pedidos en total." and res.origen_respuesta == "modelo"
+
+
+# ---------------------------------------------------------------------------
+# Fase 8: vista alternante estilo Claude.ai
+# ---------------------------------------------------------------------------
+
+def _en_chat(at: AppTest) -> bool:
+    return any("Pregúntale a la IA" in s.value for s in at.subheader)
+
+
+def _en_dashboard(at: AppTest) -> bool:
+    return bool(at.radio) and any(b.label == "📄 Generar/Actualizar PDF" for b in at.button)
+
+
+def test_iconos_existen_y_el_activo_se_distingue(app):
+    at = app(ModeloSimulado([], []))
+    chat, dash = at.button(key="vista_chat"), at.button(key="vista_dashboard")
+    assert (chat.label, dash.label) == ("💬", "📊")
+    assert (chat.proto.type, dash.proto.type) == ("primary", "secondary")
+
+    dash.click().run()
+    assert (at.button(key="vista_chat").proto.type, at.button(key="vista_dashboard").proto.type) == (
+        "secondary", "primary")
+
+
+def test_iconos_alternan_la_vista_a_todo_el_ancho(app):
+    at = app(ModeloSimulado([], []))
+    assert _en_chat(at) and not _en_dashboard(at)
+
+    at.button(key="vista_dashboard").click().run()
+    assert not list(at.exception)
+    assert _en_dashboard(at) and not _en_chat(at)
+    assert not at.chat_input, "el chat no debe estar en pantalla en la vista de dashboard"
+
+    at.button(key="vista_chat").click().run()
+    assert _en_chat(at) and not _en_dashboard(at)
+    assert at.chat_input
+
+
+def test_fijado_de_la_sidebar_abre_el_dashboard_con_esa_necesidad(app):
+    at = app(ModeloSimulado([], []))
+    assert len(at.sidebar.button) == 11
+    assert at.sidebar.button(key="fijado_N3").label == "N3 · Picos de demanda"
+
+    at.sidebar.button(key="fijado_N3").click().run()
+
+    assert not list(at.exception)
+    assert at.session_state["vista"] == "dashboard"
+    assert at.radio(key="necesidad_sel").value == "N3"
+    assert any(t.value == "N3 — Picos de demanda" for t in at.title)
+    assert at.sidebar.button(key="fijado_N3").proto.type == "primary"
+    assert at.sidebar.button(key="fijado_N1").proto.type == "secondary"
+
+
+def test_la_necesidad_elegida_sobrevive_a_pasar_por_el_chat(app):
+    at = app(ModeloSimulado([], []))
+    at.sidebar.button(key="fijado_N7").click().run()
+    at.button(key="vista_chat").click().run()
+    at.button(key="vista_dashboard").click().run()
+    assert any(t.value.startswith("N7 —") for t in at.title)
+
+
+def test_historial_persiste_al_ir_al_dashboard_y_volver(app):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
+    )), "¿Cuántos pedidos hay?")
+    antes = (len(at.chat_message), len(at.session_state["historial"]))
+
+    at.button(key="vista_dashboard").click().run()
+    assert not at.chat_message
+    at.button(key="vista_chat").click().run()
+
+    assert (len(at.chat_message), len(at.session_state["historial"])) == antes == (2, 2)
+    assert "Hay 21 pedidos en total." in _textos(at)
+
+
+def test_aviso_de_respuesta_en_curso_no_queda_en_pantalla_al_terminar(app):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
+    )), "¿Cuántos pedidos hay?")
+    assert at.session_state["pregunta_en_curso"] is None
+    assert not any("Respondiendo" in c.value for c in at.caption)
+
+
+def test_sidebar_no_tiene_chats_recientes(app):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
+    )), "¿Cuántos pedidos hay?")
+    textos = [getattr(el, "value", "") or getattr(el, "label", "") for el in at.sidebar]
+    etiquetas = [b.label for b in at.sidebar.button]
+    assert etiquetas == [f"N{i} · {app_instacart.TITULOS_NECESIDADES[f'N{i}']}" for i in range(1, 12)]
+    for texto in textos:
+        assert not any(p in str(texto).lower() for p in ("reciente", "historial", "conversaci", "¿cuántos pedidos"))
+
+
+def test_pregunta_pendiente_se_avisa_en_dashboard_y_se_procesa_al_volver(app):
+    """Simula el estado que deja un cambio de vista a mitad de respuesta
+    (medido con el servidor real en docs/FASE8_REPORTE.md): la pregunta
+    queda en `pregunta_en_curso` y la vista pasa a dashboard."""
+    modelo = ModeloSimulado(["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."])
+    at = app(modelo)
+    at.session_state["pregunta_en_curso"] = "¿Cuántos pedidos hay?"
+    at.session_state["vista"] = "dashboard"
+    at.run()
+
+    assert any("pregunta pendiente" in i.value and "¿Cuántos pedidos hay?" in i.value for i in at.info)
+    assert modelo.prompts_sql == [], "en la vista de dashboard no se procesa la pregunta"
+
+    at.button(key="vista_chat").click().run()
+
+    assert len(modelo.prompts_sql) == 1
+    assert at.session_state["pregunta_en_curso"] is None
+    assert [m["rol"] for m in at.session_state["historial"]] == ["usuario", "asistente"]
+    assert "Hay 21 pedidos en total." in _textos(at)
