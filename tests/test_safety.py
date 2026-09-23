@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.llm.nl2sql import limpiar_sql
-from src.llm.safety import SqlNoSeguro, es_seguro, validar_sql
+from src.llm.nl2sql_instacart import limpiar_sql
+from src.llm.safety_instacart import SqlNoSeguro, es_seguro, validar_sql
 
 SQL_ESCRITURA = [
     "DELETE FROM ventas",

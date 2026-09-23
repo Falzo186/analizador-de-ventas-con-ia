@@ -10,6 +10,13 @@ o RSS combinado por encima de 2.5GB / agotamiento de la RAM libre
 No reabre el diseño de N10/N11 (Fase 2B ya lo dejó cerrado): esto es una
 MEDICIÓN, para decidir en Fase 5 (LLM) cuánta RAM reservarle al modelo.
 
+Fase 7: la corrida de Fase 3 (docs/FASE3_REPORTE.md,
+docs/evidencia/concurrencia_fase3.json) usó la ruta Northwind del chat
+como carga de Ollama. Al retirar Northwind, la carga pasa a ser la ruta
+Instacart (`responder_pregunta_instacart`, modelo de
+`VENTIA_LLM_MODELO_INSTACART`); una corrida nueva no es comparable 1:1 con
+la de Fase 3.
+
 Uso:
     python -m scripts.prueba_concurrencia
     python -m scripts.prueba_concurrencia --n-preguntas 5 --out docs/evidencia_concurrencia.json
@@ -30,9 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.dashboard import servicio  # noqa: E402
-from src.db.database import crear_base_de_datos  # noqa: E402
-from src.llm.client import modelo_actual  # noqa: E402
-from src.llm.responder import responder_pregunta  # noqa: E402
+from src.llm.client import modelo_actual_instacart as modelo_actual  # noqa: E402
+from src.llm.responder_instacart import responder_pregunta_instacart  # noqa: E402
 
 PREGUNTAS_FIJAS = [
     "¿Cuántos pedidos hay en total?",
@@ -180,7 +186,7 @@ def correr_analytics(forzar: bool = True, etiqueta: str = "analytics") -> dict:
 def _responder_con_timeout(pregunta: str, timeout: float) -> dict:
     t0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=1) as ex:
-        futuro = ex.submit(responder_pregunta, pregunta, True)
+        futuro = ex.submit(responder_pregunta_instacart, pregunta)
         try:
             res = futuro.result(timeout=timeout)
             duracion = time.perf_counter() - t0
@@ -203,7 +209,6 @@ def _responder_con_timeout(pregunta: str, timeout: float) -> dict:
 
 
 def correr_ollama(preguntas: list[str], timeout: float = TIMEOUT_PREGUNTA_S, etiqueta: str = "ollama") -> dict:
-    crear_base_de_datos()
     t0 = time.perf_counter()
     respuestas = []
     for p in preguntas:

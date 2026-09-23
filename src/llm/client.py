@@ -3,8 +3,13 @@
 Centraliza en un solo lugar: qué modelo usamos, cómo se arma la llamada de
 chat, y un mensaje de error claro cuando Ollama no está corriendo.
 
-El resto del módulo `src.llm` llama a `chat()` y no sabe nada de Ollama. Eso
-además hace fácil sustituirlo por un doble en las pruebas.
+El resto de `src.llm` llama a `chat_con_modelo()` / `chat_con_modelo_stream()`
+y no sabe nada de Ollama. Eso además hace fácil sustituirlo por un doble en
+las pruebas.
+
+Fase 7: se retiraron `chat()`, `modelo_actual()`, `MODELO_POR_DEFECTO` y la
+variable `VENTIA_LLM_MODELO`, que solo usaba la ruta Northwind (archivada
+en `legacy/northwind/`). El modelo se elige con `VENTIA_LLM_MODELO_INSTACART`.
 """
 
 from __future__ import annotations
@@ -15,15 +20,11 @@ from collections.abc import Iterator
 import httpx
 import ollama
 
-#: Modelo por defecto si nadie indica otra cosa.
-MODELO_POR_DEFECTO = "llama3.1:8b"
-
-#: Modelo por defecto para la ruta Instacart (Fase 5). Puede ser distinto
-#: del de Northwind -- elegido con datos en scripts/benchmark_modelos_llm.py
-#: (único de los 3 que rechazó las 2 preguntas trampa, 0 timeouts, 1.3GB de
-#: RSS contra 9.7GB de qwen2.5-coder:14b); ver docs/FASE5_REPORTE.md.
-#: Variable de entorno NUEVA (VENTIA_LLM_MODELO_INSTACART), no reutiliza
-#: VENTIA_LLM_MODELO.
+#: Modelo por defecto (Fase 5), elegido con datos en
+#: scripts/benchmark_modelos_llm.py (único de los 3 que rechazó las 2
+#: preguntas trampa, 0 timeouts, 1.3GB de RSS contra 9.7GB de
+#: qwen2.5-coder:14b); ver docs/FASE5_REPORTE.md. Se cambia con la variable
+#: de entorno VENTIA_LLM_MODELO_INSTACART.
 MODELO_POR_DEFECTO_INSTACART = "qwen2.5-coder:1.5b"
 
 
@@ -36,24 +37,17 @@ class LlmTimeout(LlmNoDisponible):
     `LlmNoDisponible` para que quien ya atrapa esa siga funcionando."""
 
 
-def modelo_actual() -> str:
-    """Modelo a usar. Se lee en cada llamada para que el evaluador pueda
-    cambiarlo en caliente con `set VENTIA_LLM_MODELO=...` o `--modelo`.
-    """
-    return os.environ.get("VENTIA_LLM_MODELO", MODELO_POR_DEFECTO)
-
-
 def modelo_actual_instacart() -> str:
-    """Igual que `modelo_actual()`, pero para la ruta Instacart (Fase 5):
-    lee `VENTIA_LLM_MODELO_INSTACART`, una variable NUEVA e independiente
-    de `VENTIA_LLM_MODELO` (que sigue gobernando solo la ruta Northwind)."""
+    """Modelo a usar. Se lee en cada llamada (`VENTIA_LLM_MODELO_INSTACART`,
+    o `MODELO_POR_DEFECTO_INSTACART` si no está definida), así que se puede
+    cambiar sin reiniciar el proceso."""
     return os.environ.get("VENTIA_LLM_MODELO_INSTACART", MODELO_POR_DEFECTO_INSTACART)
 
 
 def modelos_disponibles() -> list[str]:
     """Lista los modelos que Ollama tiene descargados.
 
-    Lanza `LlmNoDisponible` si Ollama no responde (mismo trato que `chat`).
+    Lanza `LlmNoDisponible` si Ollama no responde (mismo trato que `chat_con_modelo`).
     """
     try:
         data = ollama.list()
@@ -71,32 +65,6 @@ def modelos_disponibles() -> list[str]:
     return nombres
 
 
-def chat(sistema: str, usuario: str, temperatura: float = 0.0) -> str:
-    """Envía un mensaje de sistema + uno de usuario y devuelve el texto.
-
-    temperatura=0.0 -> respuestas lo más deterministas posible, que es lo que
-    queremos tanto para generar SQL como para redactar la respuesta.
-    """
-    modelo = modelo_actual()
-    try:
-        respuesta = ollama.chat(
-            model=modelo,
-            messages=[
-                {"role": "system", "content": sistema},
-                {"role": "user", "content": usuario},
-            ],
-            options={"temperature": temperatura},
-        )
-    except Exception as exc:  # noqa: BLE001 - queremos un único mensaje claro
-        raise LlmNoDisponible(
-            f"No se pudo contactar a Ollama con el modelo '{modelo}'. "
-            f"Verifica que 'ollama serve' esté corriendo y que hayas hecho "
-            f"'ollama pull {modelo}'. Detalle: {exc}"
-        ) from exc
-
-    return respuesta["message"]["content"]
-
-
 def chat_con_modelo(
     modelo: str,
     sistema: str,
@@ -104,16 +72,15 @@ def chat_con_modelo(
     temperatura: float = 0.0,
     timeout_s: float | None = None,
 ) -> str:
-    """Igual que `chat()`, pero con el MODELO como parámetro explícito en
-    vez de leerlo de `modelo_actual()` (Northwind) -- lo usa la ruta
-    Instacart (`modelo_actual_instacart()`) y el benchmark de modelos
-    (Fase 5, `scripts/benchmark_modelos_llm.py`), que necesita probar
-    varios modelos en la misma corrida sin tocar `VENTIA_LLM_MODELO`.
+    """Envía un mensaje de sistema + uno de usuario al `modelo` indicado y
+    devuelve el texto. El modelo es parámetro explícito: la ruta Instacart
+    pasa `modelo_actual_instacart()` y el benchmark de modelos (Fase 5,
+    `scripts/benchmark_modelos_llm.py`) prueba varios en la misma corrida.
+    temperatura=0.0 -> respuestas lo más deterministas posible.
 
     `timeout_s`, si se pasa, limita cuánto se espera la respuesta HTTP de
     Ollama (usa un `ollama.Client` propio en vez del cliente global de
-    módulo, que no expone timeout). Función nueva y aditiva: `chat()` no
-    cambia de firma ni de comportamiento.
+    módulo, que no expone timeout).
     """
     try:
         if timeout_s is not None:

@@ -172,7 +172,7 @@ def _correr_pregunta(
             sql_crudo = client.chat_con_modelo(
                 modelo, *_sistema_usuario_sql(pregunta.texto, descripcion_esquema), timeout_s=timeout_pregunta,
             )
-            from src.llm.nl2sql import limpiar_sql
+            from src.llm.nl2sql_instacart import limpiar_sql
             r.sql = limpiar_sql(sql_crudo)
             r.intentos = 1
         except Exception as exc:  # noqa: BLE001

@@ -1,7 +1,7 @@
 [project]
 name = "ventia"
 version = "0.1.0"
-description = "Simulador de punto de venta + evaluador de precisión de un LLM local sobre datos de ventas"
+description = "Chat con IA local + dashboard de 11 necesidades analíticas sobre el dataset Instacart 2017"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
