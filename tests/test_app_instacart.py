@@ -1,0 +1,268 @@
+"""App de dos paneles (Fase 6), sin Ollama: el modelo se reemplaza por
+dobles de `client.chat_con_modelo` (SQL) y `client.chat_con_modelo_stream`
+(redacción), y el dashboard y el chat apuntan a la fixture chica.
+
+También hay tests de streaming de verdad (sin AppTest): un servidor HTTP
+local que imita `/api/chat` de Ollama manda fragmentos NDJSON espaciados
+en el tiempo, y se comprueba que el primero llega ANTES de que el servidor
+termine (no todo de una vez).
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+from streamlit.testing.v1 import AppTest
+
+from src.dashboard import servicio
+from src.llm import client
+from src.llm import responder_instacart as ri
+from src.pdf import generador as pdf_generador
+from src.ui import app_instacart
+from tests.helpers_analytics import construir_fixture
+
+RUTA_APP = "src/ui/app_instacart.py"
+
+
+class ModeloSimulado:
+    """Doble del modelo. `sql` son las respuestas de la llamada de SQL en
+    orden; `redacciones` las de la redacción en stream (cada una se entrega
+    en fragmentos de 1 palabra). Registra los mensajes de usuario."""
+
+    def __init__(self, sql: list[str], redacciones: list[str]):
+        self.sql = list(sql)
+        self.redacciones = list(redacciones)
+        self.prompts_sql: list[str] = []
+
+    def chat_con_modelo(self, modelo, sistema, usuario, **k):
+        self.prompts_sql.append(usuario)
+        return self.sql.pop(0)
+
+    def chat_con_modelo_stream(self, modelo, sistema, usuario, **k):
+        for palabra in self.redacciones.pop(0).split(" "):
+            yield palabra + " "
+
+
+@pytest.fixture(scope="module")
+def rutas(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("app_instacart")
+    src, agg = construir_fixture(tmp)
+    return src, agg, tmp
+
+
+@pytest.fixture()
+def app(rutas, monkeypatch):
+    src, agg, tmp = rutas
+    for modulo in (servicio, pdf_generador):
+        monkeypatch.setattr(modulo, "DB_PATH_DEFAULT", src)
+        monkeypatch.setattr(modulo, "AGG_PATH_DEFAULT", agg)
+        monkeypatch.setattr(modulo, "OUT_DIR_DEFAULT", tmp / "referencia")
+    monkeypatch.setattr(pdf_generador, "OUT_PDF_DEFAULT", tmp / "pdf" / "reporte.pdf")
+    monkeypatch.setattr(ri, "DB_PATH_DEFAULT", src)
+
+    def _instalar(modelo: ModeloSimulado) -> AppTest:
+        monkeypatch.setattr(client, "chat_con_modelo", modelo.chat_con_modelo)
+        monkeypatch.setattr(client, "chat_con_modelo_stream", modelo.chat_con_modelo_stream)
+        at = AppTest.from_file(RUTA_APP, default_timeout=90)
+        at.run()
+        assert not list(at.exception), f"la app falla al cargar: {list(at.exception)}"
+        return at
+
+    return _instalar
+
+
+def _preguntar(at: AppTest, pregunta: str) -> AppTest:
+    at.chat_input(key="chat_input").set_value(pregunta).run()
+    assert not list(at.exception), f"excepción sin capturar: {list(at.exception)}"
+    return at
+
+
+def _textos(at: AppTest) -> str:
+    return "\n".join(m.value for m in at.markdown)
+
+
+# ---------------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------------
+
+def test_layout_de_dos_columnas_chat_izquierda_dashboard_derecha(app):
+    at = app(ModeloSimulado([], []))
+    izquierda, derecha = at.columns[0], at.columns[1]
+    assert any("Pregúntale a la IA" in s.value for s in izquierda.subheader)
+    assert [r.label for r in derecha.radio] == ["Necesidad"]
+    assert any(b.label == "📄 Generar/Actualizar PDF" for b in derecha.button)
+    assert not at.sidebar.radio, "el dashboard no debe quedar en la barra lateral"
+
+
+def test_no_importa_la_ruta_northwind():
+    fuente = open(RUTA_APP, encoding="utf-8").read()
+    assert "src.llm.responder import" not in fuente
+    assert "from src.llm.responder " not in fuente
+    assert "src.ui.app " not in fuente and "import app\n" not in fuente
+
+
+# ---------------------------------------------------------------------------
+# Chat
+# ---------------------------------------------------------------------------
+
+def test_pregunta_muestra_sql_y_respuesta(app):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
+    )), "¿Cuántos pedidos hay?")
+
+    assert "Hay 21 pedidos en total." in _textos(at)
+    assert [c.value for c in at.code] == ["SELECT COUNT(*) AS n FROM orders"]
+    assert any(e.label.startswith("Detalles") for e in at.expander)
+    ultimo = at.session_state["historial"][-1]
+    assert ultimo["rol"] == "asistente" and ultimo["sql"] == "SELECT COUNT(*) AS n FROM orders"
+    assert ultimo["metadatos"]["filas"] == [[21]]
+
+
+def test_pregunta_de_escritura_se_muestra_como_rechazo_claro(app):
+    at = _preguntar(app(ModeloSimulado(["DELETE FROM orders"], [])), "Borra todos los pedidos.")
+
+    errores = [e.value for e in at.error]
+    assert len(errores) == 1
+    assert "Consulta rechazada por las guardas de seguridad" in errores[0]
+    assert "Traceback" not in errores[0]
+    assert [c.value for c in at.code] == ["DELETE FROM orders"]
+    assert at.session_state["historial"][-1]["metadatos"]["tipo_error"] == "rechazo"
+
+
+def test_timeout_del_modelo_se_muestra_como_error_controlado(app):
+    modelo = ModeloSimulado([], [])
+
+    def _lento(*a, **k):
+        raise client.LlmTimeout("El modelo 'x' no respondió en 30s y se canceló la espera.")
+
+    modelo.chat_con_modelo = _lento
+    at = _preguntar(app(modelo), "¿Cuántos pedidos hay?")
+
+    errores = [e.value for e in at.error]
+    assert len(errores) == 1 and "Se canceló por tiempo" in errores[0]
+    assert at.session_state["historial"][-1]["metadatos"]["tipo_error"] == "timeout"
+
+
+def test_cifra_alterada_en_el_stream_se_avisa_y_se_corrige(app):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders", "Hay 21 pedidos."],   # SQL + reintento estricto
+        ["Hay 2,1 pedidos en total."],                            # stream con cifra alterada
+    )), "¿Cuántos pedidos hay?")
+
+    assert any("alteró la cifra 2,1" in w.value for w in at.warning)
+    assert "**Respuesta corregida:** Hay 21 pedidos." in _textos(at)
+    assert at.session_state["historial"][-1]["contenido"] == "Hay 21 pedidos."
+
+
+def test_historial_persiste_entre_dos_preguntas_y_da_contexto(app):
+    modelo = ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders WHERE eval_set = 'train'",
+         "SELECT COUNT(*) AS n FROM orders WHERE eval_set = 'test'"],
+        ["Ese es el total de tipo train.", "Ese es el total de tipo test."],
+    )
+    at = _preguntar(app(modelo), "¿Cuántos pedidos hay de tipo train?")
+    at = _preguntar(at, "¿y de tipo test?")
+
+    historial = at.session_state["historial"]
+    assert [m["rol"] for m in historial] == ["usuario", "asistente", "usuario", "asistente"]
+    assert len(at.chat_message) == 4, "los dos turnos deben seguir visibles tras el segundo rerun"
+    # La segunda llamada de SQL recibió el turno anterior como contexto.
+    assert "Pregunta: ¿Cuántos pedidos hay de tipo train?" in modelo.prompts_sql[1]
+    assert "eval_set = 'train'" in modelo.prompts_sql[1]
+    assert "Pregunta actual (genera el SQL SOLO para esta): ¿y de tipo test?" in modelo.prompts_sql[1]
+    assert historial[-1]["metadatos"]["contexto_usado"] == 1
+
+
+def test_dashboard_sigue_funcionando_dentro_de_la_app(app):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
+    )), "¿Cuántos pedidos hay?")
+
+    for nid in ("N3", "N9", "N11"):
+        at.columns[1].radio[0].set_value(nid).run()
+        assert not list(at.exception), f"{nid}: {list(at.exception)}"
+        assert any(t.value.startswith(f"{nid} —") for t in at.title)
+        assert at.metric
+    # Usar el dashboard no borra la conversación.
+    assert len(at.session_state["historial"]) == 2
+
+
+def test_contexto_solo_turnos_exitosos_y_como_maximo_n():
+    def turno(pregunta, sql, filas):
+        return {"rol": "asistente", "contenido": "", "sql": sql,
+                "metadatos": {"pregunta": pregunta, "filas": filas}}
+
+    historial = [turno(f"p{i}", f"SELECT {i}", [[i]]) for i in range(5)]
+    historial.append(turno("borra", "DELETE FROM orders", None))
+    assert app_instacart.contexto_de_seguimiento(historial) == [
+        ("p2", "SELECT 2"), ("p3", "SELECT 3"), ("p4", "SELECT 4"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Streaming real: llega en fragmentos, no todo de una vez
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def ollama_que_transmite(monkeypatch):
+    """Imita `/api/chat` con `stream: true`: manda 4 líneas NDJSON con
+    0.4s entre una y otra."""
+    fragmentos = ["Hay ", "21 ", "pedidos ", "en total."]
+    PAUSA_S = 0.4
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            cuerpo = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            assert cuerpo.get("stream") is True
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            for i, texto in enumerate(fragmentos + [""]):
+                linea = json.dumps({"model": "falso", "done": i == len(fragmentos),
+                                    "message": {"role": "assistant", "content": texto}}).encode() + b"\n"
+                self.wfile.write(f"{len(linea):x}\r\n".encode() + linea + b"\r\n")
+                self.wfile.flush()
+                time.sleep(PAUSA_S)
+            self.wfile.write(b"0\r\n\r\n")
+
+        def log_message(self, *a):
+            pass
+
+    servidor = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    servidor.daemon_threads = True
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    monkeypatch.setenv("OLLAMA_HOST", f"http://127.0.0.1:{servidor.server_address[1]}")
+    yield fragmentos, PAUSA_S
+    servidor.shutdown()
+    servidor.server_close()
+
+
+def test_stream_llega_en_fragmentos_no_todo_de_una_vez(ollama_que_transmite):
+    fragmentos, pausa_s = ollama_que_transmite
+    t0 = time.perf_counter()
+    llegadas = [(texto, time.perf_counter() - t0)
+                for texto in client.chat_con_modelo_stream("falso", "s", "u", timeout_s=5)]
+
+    assert [t for t, _ in llegadas] == fragmentos
+    total = len(fragmentos) * pausa_s
+    assert llegadas[0][1] < pausa_s, f"el primer fragmento tardó {llegadas[0][1]:.2f}s: no hubo streaming"
+    assert llegadas[-1][1] >= total - pausa_s - 0.05
+    assert llegadas[0][1] < llegadas[-1][1] - 2 * pausa_s
+
+
+def test_redaccion_en_stream_entrega_fragmentos_y_luego_valida(ollama_que_transmite, monkeypatch):
+    fragmentos, _ = ollama_que_transmite
+    res = ri.ResultadoInstacart(pregunta="¿Cuántos pedidos hay?", sql="SELECT 1",
+                                columnas=["n"], filas=[(21,)])
+    generador = ri.redaccion_en_stream(res, modelo="falso", timeout_s=5)
+
+    assert next(generador) == fragmentos[0]
+    assert res.respuesta is None, "no debe finalizar antes de agotar el stream"
+    resto = list(generador)
+    assert "".join([fragmentos[0], *resto]) == "Hay 21 pedidos en total."
+    assert res.respuesta == "Hay 21 pedidos en total." and res.origen_respuesta == "modelo"

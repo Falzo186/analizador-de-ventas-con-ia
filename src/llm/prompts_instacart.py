@@ -43,24 +43,51 @@ REGLAS (obligatorias)
 """
 
 
-def prompt_sql_instacart(pregunta: str, descripcion_esquema: str) -> tuple[str, str]:
+#: Turno previo de la conversación que se ofrece como contexto: (pregunta,
+#: SQL que la respondió). Solo pregunta + SQL, nunca las filas.
+TurnoPrevio = tuple[str, str]
+
+
+def _con_contexto(pregunta: str, contexto: list[TurnoPrevio] | None) -> str:
+    """Mensaje de usuario con los turnos previos como contexto de
+    seguimiento. Sin contexto devuelve la pregunta tal cual (el prompt de
+    una pregunta suelta no cambia)."""
+    if not contexto:
+        return pregunta.strip()
+    lineas = [
+        "Conversación previa (solo para entender preguntas de seguimiento "
+        "como \"¿y de tipo test?\"; NO la respondas de nuevo):",
+    ]
+    for pregunta_previa, sql_previo in contexto:
+        lineas.append(f"- Pregunta: {pregunta_previa.strip()}")
+        lineas.append(f"  SQL: {' '.join(sql_previo.split())}")
+    lineas.append("")
+    lineas.append(f"Pregunta actual (genera el SQL SOLO para esta): {pregunta.strip()}")
+    return "\n".join(lineas)
+
+
+def prompt_sql_instacart(
+    pregunta: str, descripcion_esquema: str, contexto: list[TurnoPrevio] | None = None,
+) -> tuple[str, str]:
     """Devuelve (mensaje_de_sistema, mensaje_de_usuario) para la llamada 1
     (texto -> SQL). `descripcion_esquema` viene de
     `src.llm.esquema_instacart.construir_descripcion_esquema()` -- este
-    módulo nunca escribe nombres de tabla/columna por su cuenta."""
+    módulo nunca escribe nombres de tabla/columna por su cuenta.
+    `contexto`: turnos previos (Fase 6), ver `_con_contexto`."""
     sistema = _PLANTILLA_SQL.format(descripcion_esquema=descripcion_esquema)
-    return sistema, pregunta.strip()
+    return sistema, _con_contexto(pregunta, contexto)
 
 
 def prompt_sql_reintento_instacart(
     pregunta: str, descripcion_esquema: str, sql_anterior: str, motivo: str,
+    contexto: list[TurnoPrevio] | None = None,
 ) -> tuple[str, str]:
     """Igual que `prompt_sql_instacart`, para el ÚNICO reintento: mismo
     sistema, pero el mensaje de usuario agrega el SQL rechazado y el motivo
     EXACTO del rechazo (el de `validar_sql()` o el error del motor)."""
     sistema = _PLANTILLA_SQL.format(descripcion_esquema=descripcion_esquema)
     usuario = (
-        f"{pregunta.strip()}\n\n"
+        f"{_con_contexto(pregunta, contexto)}\n\n"
         f"Tu consulta anterior fue:\n{sql_anterior.strip()}\n\n"
         f"Tu consulta anterior fue rechazada porque: {motivo.strip()}\n"
         "Genera solo una sentencia SELECT válida sobre las tablas reales."
@@ -94,3 +121,22 @@ def prompt_respuesta_instacart(pregunta: str, tabla_resultado: str) -> tuple[str
         f"Resultado de la consulta:\n{tabla_resultado}"
     )
     return _SISTEMA_RESPUESTA, usuario
+
+
+def prompt_respuesta_estricta_instacart(
+    pregunta: str, tabla_resultado: str, cifras_alteradas: list[str], valores_exactos: list[str],
+) -> tuple[str, str]:
+    """Reintento ÚNICO de la llamada 2 cuando la redacción anterior traía
+    cifras que no están en el resultado (`src.llm.cifras_instacart`)."""
+    sistema = _SISTEMA_RESPUESTA + (
+        "- REGLA ESTRICTA: copia cada cifra tal cual aparece en la lista de "
+        "valores exactos, carácter por carácter. No agregues, quites ni "
+        "muevas dígitos ni separadores. Si dudas, escribe el número sin separadores.\n"
+    )
+    usuario = (
+        f"Pregunta del usuario:\n{pregunta.strip()}\n\n"
+        f"Resultado de la consulta:\n{tabla_resultado}\n\n"
+        f"Tu respuesta anterior tenía cifras que NO están en el resultado: {', '.join(cifras_alteradas)}.\n"
+        f"Valores exactos que puedes usar: {', '.join(valores_exactos)}."
+    )
+    return sistema, usuario

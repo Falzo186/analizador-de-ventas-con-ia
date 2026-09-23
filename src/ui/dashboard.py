@@ -1,8 +1,14 @@
 """Dashboard de las 11 necesidades analíticas de Instacart (Fase 3).
 
-Para correrla (standalone, aislada del chat -- la fusión en Fase 6):
+Para correrla (standalone, aislada del chat):
 
     streamlit run src/ui/dashboard.py
+
+Fase 6: el mismo dashboard se monta en el panel derecho de
+`src/ui/app_instacart.py`. Para poder importarlo sin ejecutarlo, el código
+de nivel de módulo pasó a funciones (`render_controles`, `render_panel`,
+`main`). Standalone se comporta igual que antes: `main()` pone los controles
+en la barra lateral y el panel en el área principal.
 
 Esta UI NO tiene lógica de negocio propia y NUNCA llama a
 `src.analytics.*.calcular()` ni a `src.analytics.registro.invocar()`
@@ -36,8 +42,6 @@ from src.dashboard import graficas_datos as gd
 from src.dashboard import servicio
 from src.pdf import generador as pdf_generador
 
-st.set_page_config(page_title="Dashboard Instacart — Fase 3", page_icon="📊", layout="wide")
-
 NECESIDADES_IDS = [f"N{i}" for i in range(1, 12)]
 
 
@@ -47,12 +51,13 @@ NECESIDADES_IDS = [f"N{i}" for i in range(1, 12)]
 # que ocurre en cada interacción de un widget, no solo al cambiar de panel).
 # ---------------------------------------------------------------------------
 
-if "version_cache" not in st.session_state:
-    st.session_state["version_cache"] = 0
-if "ultimo_refresco" not in st.session_state:
-    st.session_state["ultimo_refresco"] = None
-if "ultimo_pdf" not in st.session_state:
-    st.session_state["ultimo_pdf"] = None
+def inicializar_estado() -> None:
+    if "version_cache" not in st.session_state:
+        st.session_state["version_cache"] = 0
+    if "ultimo_refresco" not in st.session_state:
+        st.session_state["ultimo_refresco"] = None
+    if "ultimo_pdf" not in st.session_state:
+        st.session_state["ultimo_pdf"] = None
 
 
 @st.cache_data(show_spinner="Cargando necesidad...")
@@ -289,164 +294,183 @@ GRAFICOS = {
 # Sidebar: selector de necesidad + botón global de actualización
 # ---------------------------------------------------------------------------
 
-st.sidebar.title("📊 Dashboard Instacart")
-st.sidebar.caption(
-    "Fase 3 — 11 necesidades sobre datos reales de Instacart, sin IA. "
-    "Sirve resultados precalculados; nunca recalcula al cambiar de panel."
-)
-
-necesidad_sel = st.sidebar.radio("Necesidad", NECESIDADES_IDS, key="necesidad_sel")
-
-st.sidebar.divider()
-forzar = st.sidebar.checkbox(
-    "Forzar recálculo completo (ignora la caché en disco)",
-    value=False,
-    help="Sin marcar, solo recalcula lo que falte o esté rancio (huella_bd distinta a la BD fuente actual).",
-)
-if st.sidebar.button("🔄 Actualizar datos", use_container_width=True):
-    barra = st.sidebar.progress(0.0, text="Actualizando…")
-    contador = {"i": 0}
-
-    def _avance(estado: servicio.EstadoNecesidad) -> None:
-        contador["i"] += 1
-        etiqueta = "recalculada" if estado.recalculada else "ya vigente"
-        if estado.error:
-            etiqueta = f"ERROR: {estado.error}"
-        barra.progress(contador["i"] / 11, text=f"{estado.id}: {etiqueta} ({estado.duracion_s:.2f}s)")
-
-    resumen = servicio.refrescar_todas(forzar=forzar, al_terminar_cada_una=_avance)
-    st.session_state["ultimo_refresco"] = resumen
-    st.session_state["version_cache"] += 1  # invalida la caché de sesión de Streamlit (no la de disco)
-    _cargar_cacheado.clear()
-
-ultimo = st.session_state["ultimo_refresco"]
-if ultimo is not None:
-    st.sidebar.success(
-        f"Último refresco: {ultimo.n_recalculadas}/11 recalculadas en "
-        f"{ultimo.duracion_total_s:.2f}s ({ultimo.n_errores} errores)."
+def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
+    """Selector de necesidad, botón "Actualizar datos" y bloque del PDF,
+    dibujados en `area` (la barra lateral en standalone, un contenedor del
+    panel derecho en la app de dos paneles). Devuelve la necesidad elegida."""
+    area.title("📊 Dashboard Instacart")
+    area.caption(
+        "Fase 3 — 11 necesidades sobre datos reales de Instacart, sin IA. "
+        "Sirve resultados precalculados; nunca recalcula al cambiar de panel."
     )
-    with st.sidebar.expander("Detalle del último refresco"):
-        for e in ultimo.estados:
-            marca = "🔁 recalculada" if e.recalculada else "✅ ya vigente"
-            if e.error:
-                marca = "❌ error"
-            st.write(f"**{e.id}** — {marca} ({e.duracion_s:.2f}s)" + (f" — {e.error}" if e.error else ""))
 
+    necesidad_sel = area.radio("Necesidad", NECESIDADES_IDS, key="necesidad_sel", horizontal=horizontal)
 
-# ---------------------------------------------------------------------------
-# PDF: mismo mecanismo de caché que las necesidades -- este botón nunca
-# recalcula una necesidad por su cuenta, solo llama a `pdf_generador.
-# generar_pdf()`, que a su vez pasa por `servicio.cargar_necesidad()` para
-# cada una (Fase 4, decisión ya tomada: no reabrir).
-# ---------------------------------------------------------------------------
+    area.divider()
+    forzar = area.checkbox(
+        "Forzar recálculo completo (ignora la caché en disco)",
+        value=False,
+        help="Sin marcar, solo recalcula lo que falte o esté rancio (huella_bd distinta a la BD fuente actual).",
+    )
+    if area.button("🔄 Actualizar datos", use_container_width=True):
+        barra = area.progress(0.0, text="Actualizando…")
+        contador = {"i": 0}
 
-st.sidebar.divider()
-st.sidebar.subheader("📄 Reporte PDF")
+        def _avance(estado: servicio.EstadoNecesidad) -> None:
+            contador["i"] += 1
+            etiqueta = "recalculada" if estado.recalculada else "ya vigente"
+            if estado.error:
+                etiqueta = f"ERROR: {estado.error}"
+            barra.progress(contador["i"] / 11, text=f"{estado.id}: {etiqueta} ({estado.duracion_s:.2f}s)")
 
-ruta_pdf = pdf_generador.OUT_PDF_DEFAULT
-pdf_existe = ruta_pdf.exists()
-pdf_vigente = _pdf_vigente_cacheado(st.session_state["version_cache"]) if pdf_existe else False
+        resumen = servicio.refrescar_todas(forzar=forzar, al_terminar_cada_una=_avance)
+        st.session_state["ultimo_refresco"] = resumen
+        st.session_state["version_cache"] += 1  # invalida la caché de sesión de Streamlit (no la de disco)
+        _cargar_cacheado.clear()
 
-if not pdf_existe:
-    st.sidebar.caption("Aún no se generó ningún PDF.")
-elif pdf_vigente:
-    st.sidebar.caption("✅ El PDF ya está actualizado: ninguna necesidad cambió desde que se generó.")
-else:
-    st.sidebar.caption("⚠️ El PDF existe, pero al menos una necesidad cambió desde que se generó (huella_bd distinta).")
-
-forzar_pdf = st.sidebar.checkbox(
-    "Recalcular las 11 necesidades antes de generar el PDF",
-    value=False, key="forzar_pdf",
-    help="Sin marcar, el PDF usa la caché de cada necesidad tal cual esté (igual que un panel); "
-         "solo recalcula lo que falte o esté rancio.",
-)
-
-if st.sidebar.button("📄 Generar/Actualizar PDF", use_container_width=True):
-    with st.sidebar.status("Generando PDF…", expanded=False) as status:
-        resumen_pdf = pdf_generador.generar_pdf(out_pdf=ruta_pdf, forzar=forzar_pdf)
-        status.update(
-            label=f"PDF listo: {resumen_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {resumen_pdf.duracion_s:.1f}s",
-            state="complete",
+    ultimo = st.session_state["ultimo_refresco"]
+    if ultimo is not None:
+        area.success(
+            f"Último refresco: {ultimo.n_recalculadas}/11 recalculadas en "
+            f"{ultimo.duracion_total_s:.2f}s ({ultimo.n_errores} errores)."
         )
-    st.session_state["ultimo_pdf"] = resumen_pdf
-    st.session_state["version_cache"] += 1  # invalida _pdf_vigente_cacheado y _cargar_cacheado
-    _cargar_cacheado.clear()
-    _pdf_vigente_cacheado.clear()
-    pdf_existe = True
+        with area.expander("Detalle del último refresco"):
+            for e in ultimo.estados:
+                marca = "🔁 recalculada" if e.recalculada else "✅ ya vigente"
+                if e.error:
+                    marca = "❌ error"
+                st.write(f"**{e.id}** — {marca} ({e.duracion_s:.2f}s)" + (f" — {e.error}" if e.error else ""))
 
-ultimo_pdf = st.session_state["ultimo_pdf"]
-if ultimo_pdf is not None:
-    st.sidebar.success(
-        f"Generado: {ultimo_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {ultimo_pdf.duracion_s:.1f}s."
-    )
-    if ultimo_pdf.discrepancias_parametros:
-        with st.sidebar.expander(f"⚠️ {len(ultimo_pdf.discrepancias_parametros)} discrepancias JSON vs. NECESIDADES.md"):
-            for d in ultimo_pdf.discrepancias_parametros:
-                st.write(f"- {d}")
 
-if pdf_existe:
-    with open(ruta_pdf, "rb") as _fh:
-        _datos_pdf = _fh.read()
-    st.sidebar.download_button(
-        "⬇️ Descargar PDF", data=_datos_pdf, file_name=ruta_pdf.name,
-        mime="application/pdf", use_container_width=True,
+    # ---------------------------------------------------------------------------
+    # PDF: mismo mecanismo de caché que las necesidades -- este botón nunca
+    # recalcula una necesidad por su cuenta, solo llama a `pdf_generador.
+    # generar_pdf()`, que a su vez pasa por `servicio.cargar_necesidad()` para
+    # cada una (Fase 4, decisión ya tomada: no reabrir).
+    # ---------------------------------------------------------------------------
+
+    area.divider()
+    area.subheader("📄 Reporte PDF")
+
+    ruta_pdf = pdf_generador.OUT_PDF_DEFAULT
+    pdf_existe = ruta_pdf.exists()
+    pdf_vigente = _pdf_vigente_cacheado(st.session_state["version_cache"]) if pdf_existe else False
+
+    if not pdf_existe:
+        area.caption("Aún no se generó ningún PDF.")
+    elif pdf_vigente:
+        area.caption("✅ El PDF ya está actualizado: ninguna necesidad cambió desde que se generó.")
+    else:
+        area.caption("⚠️ El PDF existe, pero al menos una necesidad cambió desde que se generó (huella_bd distinta).")
+
+    forzar_pdf = area.checkbox(
+        "Recalcular las 11 necesidades antes de generar el PDF",
+        value=False, key="forzar_pdf",
+        help="Sin marcar, el PDF usa la caché de cada necesidad tal cual esté (igual que un panel); "
+             "solo recalcula lo que falte o esté rancio.",
     )
+
+    if area.button("📄 Generar/Actualizar PDF", use_container_width=True):
+        with area.status("Generando PDF…", expanded=False) as status:
+            resumen_pdf = pdf_generador.generar_pdf(out_pdf=ruta_pdf, forzar=forzar_pdf)
+            status.update(
+                label=f"PDF listo: {resumen_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {resumen_pdf.duracion_s:.1f}s",
+                state="complete",
+            )
+        st.session_state["ultimo_pdf"] = resumen_pdf
+        st.session_state["version_cache"] += 1  # invalida _pdf_vigente_cacheado y _cargar_cacheado
+        _cargar_cacheado.clear()
+        _pdf_vigente_cacheado.clear()
+        pdf_existe = True
+
+    ultimo_pdf = st.session_state["ultimo_pdf"]
+    if ultimo_pdf is not None:
+        area.success(
+            f"Generado: {ultimo_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {ultimo_pdf.duracion_s:.1f}s."
+        )
+        if ultimo_pdf.discrepancias_parametros:
+            with area.expander(f"⚠️ {len(ultimo_pdf.discrepancias_parametros)} discrepancias JSON vs. NECESIDADES.md"):
+                for d in ultimo_pdf.discrepancias_parametros:
+                    st.write(f"- {d}")
+
+    if pdf_existe:
+        with open(ruta_pdf, "rb") as _fh:
+            _datos_pdf = _fh.read()
+        area.download_button(
+            "⬇️ Descargar PDF", data=_datos_pdf, file_name=ruta_pdf.name,
+            mime="application/pdf", use_container_width=True,
+        )
+
+    return necesidad_sel
 
 
 # ---------------------------------------------------------------------------
 # Panel principal
 # ---------------------------------------------------------------------------
 
-carga = cargar(necesidad_sel)
-r = carga.resultado
+def render_panel(necesidad_sel: str) -> None:
+    """Panel de la necesidad elegida: título, gráficas, valores clave,
+    hallazgos, limitaciones y tablas."""
+    carga = cargar(necesidad_sel)
+    r = carga.resultado
 
-st.title(f"{r.id} — {r.titulo}")
-insignia = "🗄️ Desde caché en disco" if carga.desde_cache else "⚡ Recién calculado (no había caché vigente)"
-st.caption(
-    f"{insignia} · generado el `{r.fecha_generacion}` (tardó {r.duracion_s:.2f}s en calcularse) · "
-    f"esta carga tomó {carga.duracion_carga_s * 1000:.0f}ms."
-)
+    st.title(f"{r.id} — {r.titulo}")
+    insignia = "🗄️ Desde caché en disco" if carga.desde_cache else "⚡ Recién calculado (no había caché vigente)"
+    st.caption(
+        f"{insignia} · generado el `{r.fecha_generacion}` (tardó {r.duracion_s:.2f}s en calcularse) · "
+        f"esta carga tomó {carga.duracion_carga_s * 1000:.0f}ms."
+    )
 
-col_p, col_d = st.columns(2)
-with col_p:
-    st.markdown(f"**Pregunta:** {r.pregunta}")
-with col_d:
-    st.markdown(f"**Decisión:** {r.decision}")
+    col_p, col_d = st.columns(2)
+    with col_p:
+        st.markdown(f"**Pregunta:** {r.pregunta}")
+    with col_d:
+        st.markdown(f"**Decisión:** {r.decision}")
 
-with st.container(border=True):
-    st.markdown(f"**Universo:** {r.universo.texto}")
-    if r.universo.filtros:
-        st.caption("Filtros: " + "; ".join(r.universo.filtros))
+    with st.container(border=True):
+        st.markdown(f"**Universo:** {r.universo.texto}")
+        if r.universo.filtros:
+            st.caption("Filtros: " + "; ".join(r.universo.filtros))
 
-st.subheader("Gráficas")
-for titulo_grafico, chart in GRAFICOS[necesidad_sel](r):
-    st.markdown(f"*{titulo_grafico}*")
-    if chart is None:
-        st.info("No hay datos suficientes para esta gráfica con el universo/parámetros actuales.")
-    else:
-        st.altair_chart(chart, use_container_width=True)
+    st.subheader("Gráficas")
+    for titulo_grafico, chart in GRAFICOS[necesidad_sel](r):
+        st.markdown(f"*{titulo_grafico}*")
+        if chart is None:
+            st.info("No hay datos suficientes para esta gráfica con el universo/parámetros actuales.")
+        else:
+            st.altair_chart(chart, use_container_width=True)
 
-st.subheader("Valores clave")
-n_cols = min(4, len(r.valores_clave)) or 1
-cols = st.columns(n_cols)
-for i, vc in enumerate(r.valores_clave):
-    with cols[i % n_cols]:
-        st.metric(vc.etiqueta, _fmt_valor(vc.valor, vc.unidad))
+    st.subheader("Valores clave")
+    n_cols = min(4, len(r.valores_clave)) or 1
+    cols = st.columns(n_cols)
+    for i, vc in enumerate(r.valores_clave):
+        with cols[i % n_cols]:
+            st.metric(vc.etiqueta, _fmt_valor(vc.valor, vc.unidad))
 
-st.subheader("Hallazgos")
-for h in r.hallazgos:
-    st.markdown(f"- {h}")
+    st.subheader("Hallazgos")
+    for h in r.hallazgos:
+        st.markdown(f"- {h}")
 
-st.subheader("⚠️ Limitaciones")
-st.caption("Siempre visibles, nunca en un expander colapsado por defecto.")
-for lim in r.limitaciones:
-    st.warning(lim, icon="⚠️")
+    st.subheader("⚠️ Limitaciones")
+    st.caption("Siempre visibles, nunca en un expander colapsado por defecto.")
+    for lim in r.limitaciones:
+        st.warning(lim, icon="⚠️")
 
-with st.expander("Parámetros usados en esta necesidad"):
-    for p in r.parametros:
-        st.markdown(f"**{p.nombre}** = `{p.valor}`  \n{p.justificacion}")
+    with st.expander("Parámetros usados en esta necesidad"):
+        for p in r.parametros:
+            st.markdown(f"**{p.nombre}** = `{p.valor}`  \n{p.justificacion}")
 
-with st.expander("Tablas de datos (las mismas que alimentan las gráficas de arriba)"):
-    for nombre_tabla, filas in r.tablas.items():
-        st.caption(f"`{nombre_tabla}` — {r.tablas_criterio_corte.get(nombre_tabla, '')}")
-        st.dataframe(_df(filas), use_container_width=True, height=min(320, 45 + 30 * len(filas)))
+    with st.expander("Tablas de datos (las mismas que alimentan las gráficas de arriba)"):
+        for nombre_tabla, filas in r.tablas.items():
+            st.caption(f"`{nombre_tabla}` — {r.tablas_criterio_corte.get(nombre_tabla, '')}")
+            st.dataframe(_df(filas), use_container_width=True, height=min(320, 45 + 30 * len(filas)))
+
+
+def main() -> None:
+    st.set_page_config(page_title="Dashboard Instacart — Fase 3", page_icon="📊", layout="wide")
+    inicializar_estado()
+    render_panel(render_controles(st.sidebar))
+
+
+if __name__ == "__main__":
+    main()

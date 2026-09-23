@@ -10,6 +10,7 @@ además hace fácil sustituirlo por un doble en las pruebas.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import httpx
 import ollama
@@ -146,3 +147,48 @@ def chat_con_modelo(
         ) from exc
 
     return respuesta["message"]["content"]
+
+
+def chat_con_modelo_stream(
+    modelo: str,
+    sistema: str,
+    usuario: str,
+    temperatura: float = 0.0,
+    timeout_s: float | None = None,
+) -> Iterator[str]:
+    """Igual que `chat_con_modelo`, pero con `stream=True`: devuelve los
+    fragmentos de texto a medida que Ollama los genera (Fase 6, chat con
+    streaming). `ollama-python` 0.3.3 lo soporta: con `stream=True`,
+    `Client.chat` devuelve un generador de dicts `{"message": {"content":
+    ...}, "done": bool}`.
+
+    `timeout_s` es el timeout de httpx, que en streaming se aplica POR
+    LECTURA (tiempo máximo sin recibir un fragmento), no a la respuesta
+    completa. Los errores se traducen igual que en `chat_con_modelo`, en el
+    momento en que ocurren (también a mitad del stream).
+    """
+    try:
+        cliente = ollama.Client(timeout=timeout_s)
+        fragmentos = cliente.chat(
+            model=modelo,
+            messages=[
+                {"role": "system", "content": sistema},
+                {"role": "user", "content": usuario},
+            ],
+            options={"temperature": temperatura},
+            stream=True,
+        )
+        for fragmento in fragmentos:
+            texto = fragmento["message"]["content"]
+            if texto:
+                yield texto
+    except httpx.TimeoutException as exc:
+        raise LlmTimeout(
+            f"El modelo '{modelo}' dejó de enviar texto por más de {timeout_s:.0f}s y se canceló la espera."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - queremos un único mensaje claro
+        raise LlmNoDisponible(
+            f"No se pudo contactar a Ollama con el modelo '{modelo}'. "
+            f"Verifica que 'ollama serve' esté corriendo y que hayas hecho "
+            f"'ollama pull {modelo}'. Detalle: {exc}"
+        ) from exc

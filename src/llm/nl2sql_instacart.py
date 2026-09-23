@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from src.llm import client
 from src.llm.nl2sql import limpiar_sql
-from src.llm.prompts_instacart import prompt_sql_instacart, prompt_sql_reintento_instacart
+from src.llm.prompts_instacart import TurnoPrevio, prompt_sql_instacart, prompt_sql_reintento_instacart
 
 __all__ = ["limpiar_sql", "generar_sql_instacart", "generar_sql_reintento_instacart"]
 
@@ -25,11 +25,12 @@ def generar_sql_instacart(
     *,
     modelo: str | None = None,
     timeout_s: float | None = None,
+    contexto: list[TurnoPrevio] | None = None,
 ) -> str:
     """Pide al modelo (Instacart, `client.modelo_actual_instacart()`) el
     SQL para `pregunta`, dado el esquema ya introspeccionado, y lo
-    devuelve limpio."""
-    sistema, usuario = prompt_sql_instacart(pregunta, descripcion_esquema)
+    devuelve limpio. `contexto`: turnos previos de la conversación."""
+    sistema, usuario = prompt_sql_instacart(pregunta, descripcion_esquema, contexto)
     crudo = client.chat_con_modelo(
         modelo or client.modelo_actual_instacart(), sistema, usuario, timeout_s=timeout_s,
     )
@@ -44,10 +45,13 @@ def generar_sql_reintento_instacart(
     *,
     modelo: str | None = None,
     timeout_s: float | None = None,
+    contexto: list[TurnoPrevio] | None = None,
 ) -> str:
     """Segundo (y último) intento: vuelve a pedir el SQL incluyendo el SQL
     rechazado y el motivo exacto del rechazo."""
-    sistema, usuario = prompt_sql_reintento_instacart(pregunta, descripcion_esquema, sql_anterior, motivo)
+    sistema, usuario = prompt_sql_reintento_instacart(
+        pregunta, descripcion_esquema, sql_anterior, motivo, contexto,
+    )
     crudo = client.chat_con_modelo(
         modelo or client.modelo_actual_instacart(), sistema, usuario, timeout_s=timeout_s,
     )
