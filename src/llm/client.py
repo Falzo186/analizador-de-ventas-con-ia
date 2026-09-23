@@ -65,6 +65,40 @@ def modelos_disponibles() -> list[str]:
     return nombres
 
 
+#: Timeout de las llamadas de administración (`/api/ps` y la descarga). No
+#: generan texto: con Ollama sano responden en milisegundos.
+TIMEOUT_ADMIN_S = 10.0
+
+
+def modelos_cargados() -> list[dict]:
+    """Modelos que Ollama tiene cargados en memoria AHORA (`GET /api/ps`),
+    como `[{"nombre", "size_bytes", "expires_at"}]`. `size_bytes` es el
+    `size` que reporta la API; en esta máquina coincide con el RSS real del
+    proceso `llama-server` con menos del 1% de diferencia
+    (docs/FASE9_INVESTIGACION.md). Lanza `LlmNoDisponible` si Ollama no responde."""
+    try:
+        data = ollama.Client(timeout=TIMEOUT_ADMIN_S).ps()
+    except Exception as exc:  # noqa: BLE001
+        raise LlmNoDisponible(f"No se pudo consultar /api/ps: ¿está corriendo Ollama? Detalle: {exc}") from exc
+    return [
+        {"nombre": m.get("model") or m.get("name"), "size_bytes": m.get("size"), "expires_at": m.get("expires_at")}
+        for m in data.get("models", [])
+    ]
+
+
+def liberar_modelo(modelo: str) -> None:
+    """Descarga `modelo` de la memoria sin tocar el servicio: `POST
+    /api/generate` con `keep_alive: 0` y sin prompt. Ollama responde
+    `done_reason: "unload"` y termina el proceso `llama-server` del modelo
+    (verificado en docs/FASE9_INVESTIGACION.md). Si el modelo no estaba
+    cargado, no tiene efecto. Lanza `LlmNoDisponible` si Ollama no responde
+    o el modelo no existe (HTTP 404)."""
+    try:
+        ollama.Client(timeout=TIMEOUT_ADMIN_S).generate(model=modelo, prompt="", keep_alive=0)
+    except Exception as exc:  # noqa: BLE001
+        raise LlmNoDisponible(f"No se pudo liberar el modelo '{modelo}': {exc}") from exc
+
+
 def chat_con_modelo(
     modelo: str,
     sistema: str,

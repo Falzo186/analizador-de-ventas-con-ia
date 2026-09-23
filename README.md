@@ -68,6 +68,12 @@ Todo lo que se genera (`data/*.duckdb`, `data/referencia/`, `data/cache/`,
 
 ## Correr la app
 
+**Ollama debe estar corriendo antes de abrir la app**; verifica con
+`systemctl status ollama`. Es un servicio del sistema, y la app no puede
+iniciarlo ni detenerlo: hacerlo requiere contraseña de administrador (ver
+[`docs/FASE9_INVESTIGACION.md`](docs/FASE9_INVESTIGACION.md)). Si Ollama no
+responde, el panel ⚙️ lo indica y el chat devuelve errores controlados.
+
 ```bash
 .venv/bin/streamlit run src/ui/app_instacart.py
 ```
@@ -77,6 +83,22 @@ Arriba del área principal hay dos íconos, **💬** (chat) y **📊**
 resaltado. La barra lateral lista las 11 necesidades como fijados: un clic
 abre el dashboard en esa necesidad.
 
+El ícono **⚙️** de la barra, disponible en las dos vistas, abre la
+configuración:
+
+- **Modelo**: solo lista los modelos que Ollama tiene descargados en ese
+  momento. El elegido se usa desde la siguiente pregunta; la que está en
+  curso termina con el modelo con el que se envió.
+- **Esfuerzo**: Bajo / Medio / Alto / Ultra / Extremo fija el tiempo máximo
+  de cada llamada al modelo: 15 / 30 / 60 / 150 / 300 s. Medio es el
+  valor por defecto. No cambia el timeout de la consulta en DuckDB (10 s).
+  La primera pregunta después de cargar un modelo tarda mucho más (medido:
+  1.5b ~22 s, 8b ~106 s, 14b ~220 s); tabla y justificación en
+  [`docs/FASE9_REPORTE.md`](docs/FASE9_REPORTE.md).
+- **Memoria de Ollama**: modelos cargados y cuánto ocupan (según
+  `/api/ps`), y un botón para liberarlos (`keep_alive: 0`, sin tocar el
+  servicio).
+
 - **Dashboard standalone** (sin chat): `.venv/bin/streamlit run src/ui/dashboard.py`
 - **Chat por línea de comandos**: `.venv/bin/python -m src.llm.responder_instacart "¿Cuántos pedidos hay en total?"`
 - **PDF por línea de comandos**: `.venv/bin/python -m src.pdf.generador` (añade `--forzar` para recalcular las 11 necesidades)
@@ -85,7 +107,7 @@ abre el dashboard en esa necesidad.
 
 | Variable | Default | Efecto |
 |---|---|---|
-| `VENTIA_LLM_MODELO_INSTACART` | `qwen2.5-coder:1.5b` | Modelo de Ollama del chat. Se lee en cada pregunta. El default se eligió con el benchmark de 3 modelos de la Fase 5. |
+| `VENTIA_LLM_MODELO_INSTACART` | `qwen2.5-coder:1.5b` | Modelo **inicial** del selector ⚙️, si está descargado; si no, el primero disponible. También es el modelo del chat por línea de comandos. El default se eligió con el benchmark de 3 modelos de la Fase 5. |
 | `OLLAMA_HOST` | `http://localhost:11434` | La lee la librería `ollama`: dónde está el servidor. |
 
 Las variables de la etapa Northwind (`VENTIA_DB_PATH`, `VENTIA_LLM_MODELO`)
@@ -192,9 +214,12 @@ documento enlazado.
   modelo se le mandan los últimos 3 turnos exitosos como (pregunta, SQL).
   *"¿y de tipo test?"* se resuelve bien si el SQL anterior era correcto, y
   falla si no lo era (caso real de la Fase 6).
-- La primera pregunta después de arrancar Ollama tarda más (carga del
-  modelo). El timeout del modelo es de 30 s por llamada; en streaming es
-  por fragmento.
+- La primera pregunta después de cargar un modelo tarda mucho más: carga
+  más la primera evaluación del prompt de ~1,830 tokens en CPU. Medido: 1.5b
+  ~22 s, 8b ~106 s, 14b ~220 s; luego, segundos. Con esfuerzo Medio (30 s),
+  el 8b recién cargado da timeout: usa Ultra, o Extremo para el 14b.
+  Liberar un modelo hace que la siguiente pregunta vuelva a pagar ese
+  costo. En streaming, el timeout es por fragmento.
 - La validación de cifras puede descartar una cifra derivada legítima (un
   cálculo que no está en el resultado) y sustituirla por el reintento o la
   plantilla. Es un falso positivo seguro.
@@ -230,7 +255,9 @@ documento enlazado.
 | 5 | IA local sobre Instacart: esquema leído de la base, guardas reales, reintento, benchmark de 3 modelos y modelo por defecto `qwen2.5-coder:1.5b` | `f7ccb28` | [`FASE5_REPORTE.md`](docs/FASE5_REPORTE.md) |
 | 6 | App de dos paneles, chat con streaming e historial, validación de cifras | `a92c9db` | [`FASE6_REPORTE.md`](docs/FASE6_REPORTE.md) |
 | 7 | Retiro de Northwind y del simulador a `legacy/`, limpieza de dependencias y este README | `57d3a86` | [`FASE7_REPORTE.md`](docs/FASE7_REPORTE.md) |
-| 8 | Interfaz de vista alternante estilo Claude.ai: íconos 💬/📊 y necesidades fijadas en la barra lateral | ver `git log` | [`FASE8_REPORTE.md`](docs/FASE8_REPORTE.md) |
+| 8 | Interfaz de vista alternante estilo Claude.ai: íconos 💬/📊 y necesidades fijadas en la barra lateral | `a88911d` | [`FASE8_REPORTE.md`](docs/FASE8_REPORTE.md) |
+| — | Hotfix 1: un cambio de vista ya no repite la fase SQL en curso; regla de `eval_set` del prompt | `57b58e6` | [`HOTFIX1_REPORTE.md`](docs/HOTFIX1_REPORTE.md) |
+| 9 | Selector de modelo y de esfuerzo (timeout), estado y liberación de memoria de Ollama | ver `git log` | [`FASE9_REPORTE.md`](docs/FASE9_REPORTE.md) |
 
 El código de la etapa anterior (chat sobre Northwind, simulador de ventas
 sintéticas y evaluador del banco de Northwind) está archivado en

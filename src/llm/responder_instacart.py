@@ -273,9 +273,11 @@ def responder_pregunta_instacart(
     timeout_sql_llm_s: float = TIMEOUT_LLM_SQL_S,
     timeout_respuesta_llm_s: float = TIMEOUT_LLM_RESPUESTA_S,
     contexto: list[TurnoPrevio] | None = None,
+    modelo: str | None = None,
 ) -> ResultadoInstacart:
     """Ejecuta el flujo completo y SIEMPRE devuelve un `ResultadoInstacart`
-    (nunca lanza una excepción hacia quien llama)."""
+    (nunca lanza una excepción hacia quien llama). `modelo` (Fase 9): el
+    modelo de Ollama a usar; por defecto, `client.modelo_actual_instacart()`."""
     res = ResultadoInstacart(pregunta=pregunta)
 
     try:
@@ -298,6 +300,7 @@ def responder_pregunta_instacart(
             generar_y_ejecutar_con_reintento(
                 con, pregunta, descripcion_esquema, res,
                 timeout_llm_s=timeout_sql_llm_s, limite_filas=limite_filas, contexto=contexto,
+                modelo=modelo,
             )
         except client.LlmTimeout as exc:
             res.error = f"El modelo tardó demasiado en generar la consulta y se canceló: {exc}"
@@ -321,9 +324,9 @@ def responder_pregunta_instacart(
     if redactar:
         try:
             texto = redactar_respuesta_instacart(
-                pregunta, res.columnas, res.filas, timeout_s=timeout_respuesta_llm_s,
+                pregunta, res.columnas, res.filas, modelo=modelo, timeout_s=timeout_respuesta_llm_s,
             )
-            finalizar_redaccion(res, texto, timeout_s=timeout_respuesta_llm_s)
+            finalizar_redaccion(res, texto, modelo=modelo, timeout_s=timeout_respuesta_llm_s)
         except Exception as exc:  # noqa: BLE001
             res.respuesta = None
             res.error = f"Se obtuvo el resultado pero no se pudo redactar la respuesta: {exc}"

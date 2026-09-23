@@ -37,12 +37,16 @@ class ModeloSimulado:
         self.sql = list(sql)
         self.redacciones = list(redacciones)
         self.prompts_sql: list[str] = []
+        #: (tipo, modelo, timeout_s) de cada llamada, en orden (Fase 9).
+        self.llamadas: list[tuple[str, str, float | None]] = []
 
     def chat_con_modelo(self, modelo, sistema, usuario, **k):
         self.prompts_sql.append(usuario)
+        self.llamadas.append(("chat", modelo, k.get("timeout_s")))
         return self.sql.pop(0)
 
     def chat_con_modelo_stream(self, modelo, sistema, usuario, **k):
+        self.llamadas.append(("stream", modelo, k.get("timeout_s")))
         for palabra in self.redacciones.pop(0).split(" "):
             yield palabra + " "
 
@@ -63,6 +67,11 @@ def app(rutas, monkeypatch):
         monkeypatch.setattr(modulo, "OUT_DIR_DEFAULT", tmp / "referencia")
     monkeypatch.setattr(pdf_generador, "OUT_PDF_DEFAULT", tmp / "pdf" / "reporte.pdf")
     monkeypatch.setattr(ri, "DB_PATH_DEFAULT", src)
+
+    # Fase 9: el panel ⚙️ consulta a Ollama en cada ejecución; en los tests
+    # se simula con un solo modelo descargado y nada cargado en memoria.
+    monkeypatch.setattr(client, "modelos_disponibles", lambda: ["qwen2.5-coder:1.5b"])
+    monkeypatch.setattr(client, "modelos_cargados", lambda: [])
 
     def _instalar(modelo: ModeloSimulado) -> AppTest:
         monkeypatch.setattr(client, "chat_con_modelo", modelo.chat_con_modelo)
@@ -481,3 +490,202 @@ def test_cada_fijado_navega_ida_y_vuelta(app, nid):
     at.button(key="vista_dashboard").click().run()
     assert not list(at.exception)
     assert any(t.value == titulo for t in at.title), f"{nid}: al volver no se conservó la necesidad"
+
+
+# ---------------------------------------------------------------------------
+# Fase 9: selector de modelo, esfuerzo -> timeout y memoria de Ollama
+# ---------------------------------------------------------------------------
+
+MODELOS_FALSOS = ["modelo-a:1b", "modelo-b:8b"]
+
+
+@pytest.fixture()
+def dos_modelos(monkeypatch):
+    monkeypatch.setattr(client, "modelos_disponibles", lambda: list(MODELOS_FALSOS))
+    monkeypatch.delenv("VENTIA_LLM_MODELO_INSTACART", raising=False)
+
+
+def test_selector_lista_solo_los_modelos_que_devuelve_ollama(app, dos_modelos):
+    at = app(ModeloSimulado([], []))
+    selector = at.selectbox(key="modelo_sel")
+    assert list(selector.options) == MODELOS_FALSOS
+    # El default del proyecto (qwen2.5-coder:1.5b) NO está en la lista: se
+    # elige el primero real, nunca uno inventado.
+    assert selector.value == "modelo-a:1b"
+
+
+def test_selector_respeta_el_modelo_por_defecto_si_esta_disponible(app, dos_modelos, monkeypatch):
+    monkeypatch.setenv("VENTIA_LLM_MODELO_INSTACART", "modelo-b:8b")
+    at = app(ModeloSimulado([], []))
+    assert at.selectbox(key="modelo_sel").value == "modelo-b:8b"
+
+
+def test_ollama_caido_se_informa_sin_romper_la_app(app, monkeypatch):
+    def _caido():
+        raise client.LlmNoDisponible("sin conexión")
+
+    monkeypatch.setattr(client, "modelos_disponibles", _caido)
+    at = app(ModeloSimulado([], []))
+    assert not list(at.exception)
+    assert any("systemctl status ollama" in e.value for e in at.error)
+    assert not at.selectbox, "sin Ollama no se ofrece ningún modelo"
+    assert at.chat_input, "el chat sigue en pantalla (sus errores ya son controlados)"
+
+
+def test_modelo_elegido_se_usa_en_la_siguiente_pregunta(app, dos_modelos):
+    modelo = ModeloSimulado(["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."])
+    at = app(modelo)
+    at.selectbox(key="modelo_sel").set_value("modelo-b:8b").run()
+    at = _preguntar(at, "¿Cuántos pedidos hay?")
+
+    assert [m for _t, m, _to in modelo.llamadas] == ["modelo-b:8b", "modelo-b:8b"]
+    assert at.session_state["historial"][-1]["metadatos"]["modelo"] == "modelo-b:8b"
+
+
+@pytest.mark.parametrize("esfuerzo", list(app_instacart.ESFUERZOS))
+def test_esfuerzo_cambia_el_timeout_efectivo_de_la_siguiente_llamada(app, esfuerzo):
+    modelo = ModeloSimulado(["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."])
+    at = app(modelo)
+    at.select_slider(key="esfuerzo_sel").set_value(esfuerzo).run()
+    at = _preguntar(at, "¿Cuántos pedidos hay?")
+
+    t_sql, t_resp = app_instacart.ESFUERZOS[esfuerzo]
+    assert modelo.llamadas == [("chat", "qwen2.5-coder:1.5b", t_sql), ("stream", "qwen2.5-coder:1.5b", t_resp)]
+    assert at.session_state["historial"][-1]["metadatos"]["esfuerzo"] == esfuerzo
+
+
+def test_medio_es_el_default_y_conserva_los_timeouts_previos(app):
+    at = app(ModeloSimulado([], []))
+    assert at.select_slider(key="esfuerzo_sel").value == "Medio"
+    assert app_instacart.ESFUERZOS["Medio"] == (ri.TIMEOUT_LLM_SQL_S, ri.TIMEOUT_LLM_RESPUESTA_S) == (30.0, 30.0)
+    valores = [v for par in app_instacart.ESFUERZOS.values() for v in par[:1]]
+    assert valores == sorted(valores), "los niveles deben ser crecientes"
+
+
+def test_liberar_memoria_llama_a_liberar_modelo_y_muestra_el_estado_real(app, monkeypatch):
+    cargados = [{"nombre": "qwen2.5-coder:1.5b", "size_bytes": 1169980128, "expires_at": "x"}]
+    liberados: list[str] = []
+    monkeypatch.setattr(client, "modelos_cargados", lambda: list(cargados))
+
+    def _liberar(nombre):
+        liberados.append(nombre)
+        cargados.clear()  # lo que haría Ollama: /api/ps queda vacío
+
+    monkeypatch.setattr(client, "liberar_modelo", _liberar)
+    at = app(ModeloSimulado([], []))
+    assert any("1,116 MiB" in c.value and "qwen2.5-coder:1.5b" in c.value for c in at.caption)
+
+    at.button(key="liberar_memoria").click().run()
+
+    assert liberados == ["qwen2.5-coder:1.5b"]
+    assert any("Ningún modelo cargado" in c.value for c in at.caption)
+    assert any("Liberado: qwen2.5-coder:1.5b" in s.value for s in at.success)
+
+
+def test_liberar_esta_deshabilitado_sin_modelos_cargados_o_con_pregunta_en_curso(app, monkeypatch):
+    at = app(ModeloSimulado([], []))
+    assert at.button(key="liberar_memoria").disabled, "sin modelos cargados no hay nada que liberar"
+
+    monkeypatch.setattr(client, "modelos_cargados",
+                        lambda: [{"nombre": "qwen2.5-coder:1.5b", "size_bytes": 1, "expires_at": None}])
+    at.session_state["pregunta_en_curso"] = "¿algo?"
+    at.session_state["vista"] = "dashboard"  # la pregunta queda pendiente, no se procesa
+    at.run()
+    assert at.button(key="liberar_memoria").disabled
+
+
+def test_cambiar_de_modelo_a_mitad_de_una_pregunta_no_crea_otro_calculo(app, dos_modelos):
+    """Un cambio de modelo a mitad de una pregunta es un rerun completo, igual
+    que un cambio de vista (HOTFIX 1). La pregunta en curso termina con la
+    configuración con la que se ENVIÓ: se espera al hilo de su fase SQL (no
+    hay otro cálculo) y la redacción usa ese mismo modelo. El modelo nuevo
+    aplica a la siguiente pregunta."""
+    pregunta = "¿Cuántos pedidos hay?"
+    modelo = ModeloSimulado(["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total.", "Hay 21 pedidos."])
+    at = app(modelo)
+    config_envio = {"modelo": "modelo-a:1b", "esfuerzo": "Alto", "timeout_sql_s": 60.0, "timeout_respuesta_s": 60.0}
+    en_curso = {"pregunta": pregunta, "modelo": "modelo-a:1b", "hilo": None, "res": None}
+
+    def _fase_sql_en_otro_hilo():
+        time.sleep(0.5)
+        en_curso["res"] = ri.ResultadoInstacart(pregunta=pregunta, sql="SELECT COUNT(*) AS n FROM orders",
+                                                columnas=["n"], filas=[(21,)], intentos=1)
+
+    en_curso["hilo"] = threading.Thread(target=_fase_sql_en_otro_hilo, daemon=True)
+    en_curso["hilo"].start()
+    at.session_state["pregunta_en_curso"] = pregunta
+    at.session_state["config_en_curso"] = config_envio
+    at.session_state["sql_en_curso"] = en_curso
+    at.selectbox(key="modelo_sel").set_value("modelo-b:8b").run()   # el cambio de modelo
+
+    assert modelo.prompts_sql == [], "el cambio de modelo no debe lanzar otra fase SQL"
+    assert modelo.llamadas == [("stream", "modelo-a:1b", 60.0)], "la pregunta termina con su configuración"
+    assert at.session_state["historial"][-1]["metadatos"]["modelo"] == "modelo-a:1b"
+    assert at.session_state["config_en_curso"] is None
+
+    at = _preguntar(at, "¿Y ahora?")                                    # la siguiente usa el nuevo
+    assert [m for _t, m, _to in modelo.llamadas[1:]] == ["modelo-b:8b", "modelo-b:8b"]
+
+
+# --- Nivel HTTP: las funciones nuevas de client hablan con la API correcta ---
+
+@pytest.fixture()
+def ollama_admin(monkeypatch):
+    """Servidor que imita /api/ps y /api/generate y registra cada petición."""
+    peticiones: list[tuple[str, str, dict]] = []
+    estado = {"cargados": [{"name": "qwen2.5-coder:1.5b", "model": "qwen2.5-coder:1.5b",
+                            "size": 1169980128, "expires_at": "2026-09-23T11:11:02Z"}]}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def _responder(self, codigo, cuerpo):
+            datos = json.dumps(cuerpo).encode()
+            self.send_response(codigo)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(datos)))
+            self.end_headers()
+            self.wfile.write(datos)
+
+        def do_GET(self):  # noqa: N802
+            peticiones.append(("GET", self.path, {}))
+            self._responder(200, {"models": estado["cargados"]})
+
+        def do_POST(self):  # noqa: N802
+            cuerpo = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            peticiones.append(("POST", self.path, cuerpo))
+            if cuerpo.get("model") == "no-existe:1b":
+                self._responder(404, {"error": "model 'no-existe:1b' not found"})
+                return
+            estado["cargados"] = [m for m in estado["cargados"] if m["name"] != cuerpo.get("model")]
+            self._responder(200, {"model": cuerpo.get("model"), "response": "", "done": True, "done_reason": "unload"})
+
+        def log_message(self, *a):
+            pass
+
+    servidor = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    servidor.daemon_threads = True
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    monkeypatch.setenv("OLLAMA_HOST", f"http://127.0.0.1:{servidor.server_address[1]}")
+    yield peticiones
+    servidor.shutdown()
+    servidor.server_close()
+
+
+def test_liberar_modelo_hace_post_api_generate_con_keep_alive_0(ollama_admin):
+    client.liberar_modelo("qwen2.5-coder:1.5b")
+    metodo, ruta, cuerpo = ollama_admin[-1]
+    assert (metodo, ruta) == ("POST", "/api/generate")
+    assert cuerpo["model"] == "qwen2.5-coder:1.5b"
+    assert cuerpo["keep_alive"] == 0
+    assert not cuerpo.get("prompt"), "no debe generar texto"
+    assert client.modelos_cargados() == []
+
+
+def test_modelos_cargados_lee_api_ps(ollama_admin):
+    assert client.modelos_cargados() == [
+        {"nombre": "qwen2.5-coder:1.5b", "size_bytes": 1169980128, "expires_at": "2026-09-23T11:11:02Z"}]
+    assert ollama_admin[-1][:2] == ("GET", "/api/ps")
+
+
+def test_liberar_modelo_inexistente_da_error_controlado(ollama_admin):
+    with pytest.raises(client.LlmNoDisponible, match="no-existe:1b"):
+        client.liberar_modelo("no-existe:1b")
