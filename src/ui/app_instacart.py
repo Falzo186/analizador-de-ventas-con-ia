@@ -26,14 +26,19 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   selector del dashboard (`necesidad_sel`).
 - Cambiar de vista es un rerun completo. Si hay una pregunta en proceso, la
   ejecución en curso se abandona y la pregunta queda en
-  `pregunta_en_curso`: se vuelve a procesar al regresar al chat (medido en
-  docs/FASE8_REPORTE.md). Mientras tanto, ambas vistas avisan que está
+  `pregunta_en_curso`. Desde el HOTFIX 1, la fase SQL no se repite: se
+  reutiliza su resultado, o se espera al hilo que la calcula
+  (`_resultado_sql`). Solo la redacción se reanuda al regresar al chat
+  (docs/HOTFIX1_REPORTE.md). Ambas vistas avisan que hay una pregunta
   pendiente.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import sys
+import threading
+import time
 from pathlib import Path
 
 # `streamlit run` solo agrega al sys.path la carpeta del script (src/ui/).
@@ -198,6 +203,44 @@ def render_mensaje(mensaje: dict) -> None:
 # Un turno en vivo
 # ---------------------------------------------------------------------------
 
+#: Resultado de la fase SQL de la pregunta en curso:
+#: {"pregunta", "hilo", "res"}. Ver `_resultado_sql`.
+CLAVE_SQL_EN_CURSO = "sql_en_curso"
+ESPERA_POLL_S = 0.2
+
+
+def _resultado_sql(pregunta: str, contexto: list[tuple[str, str]]) -> ri.ResultadoInstacart:
+    """Fase SQL (`responder_pregunta_instacart(redactar=False)`) sin repetir
+    trabajo si un cambio de vista abandona la ejecución (HOTFIX 1).
+
+    Un cambio de vista es un rerun completo. Con `runner.fastReruns`,
+    Streamlit arranca la ejecución nueva en otro hilo sin esperar a la
+    anterior, y la anterior solo se detiene en su siguiente llamada a
+    Streamlit. La fase SQL no tiene ninguna, así que el hilo abandonado la
+    completa igual (2+ llamadas a Ollama) y antes del HOTFIX descartaba el
+    resultado, mientras cada regreso al chat lanzaba otro cálculo completo.
+    Ahora el resultado se guarda en session_state en cuanto termina, incluso
+    desde un hilo abandonado, y:
+      - si ya está calculado para esta pregunta, se reutiliza;
+      - si otro hilo todavía lo calcula, se espera a ese hilo;
+      - solo si nadie lo tiene (o el hilo murió sin resultado) se calcula.
+    """
+    en_curso = st.session_state.get(CLAVE_SQL_EN_CURSO)
+    if en_curso is not None and en_curso["pregunta"] == pregunta:
+        while en_curso["res"] is None and en_curso["hilo"].is_alive():
+            time.sleep(ESPERA_POLL_S)
+        if en_curso["res"] is not None:
+            # Copia: el hilo abandonado no debe compartir el objeto que la
+            # redacción de esta ejecución va a completar.
+            return dataclasses.replace(en_curso["res"])
+    en_curso = {"pregunta": pregunta, "hilo": threading.current_thread(), "res": None}
+    st.session_state[CLAVE_SQL_EN_CURSO] = en_curso
+    en_curso["res"] = ri.responder_pregunta_instacart(
+        pregunta, db_path=ri.DB_PATH_DEFAULT, redactar=False, contexto=contexto,
+    )
+    return dataclasses.replace(en_curso["res"])
+
+
 def responder_en_vivo(pregunta: str) -> None:
     historial = st.session_state["historial"]
     contexto = contexto_de_seguimiento(historial)
@@ -205,9 +248,7 @@ def responder_en_vivo(pregunta: str) -> None:
         st.markdown(pregunta)
     with st.chat_message("assistant"):
         with st.status("Generando y ejecutando la consulta…", expanded=False) as estado:
-            res = ri.responder_pregunta_instacart(
-                pregunta, db_path=ri.DB_PATH_DEFAULT, redactar=False, contexto=contexto,
-            )
+            res = _resultado_sql(pregunta, contexto)
             estado.update(label="Consulta lista" if res.ok else "La consulta no se pudo completar",
                           state="complete" if res.ok else "error")
         if res.ok:
@@ -222,6 +263,7 @@ def responder_en_vivo(pregunta: str) -> None:
         render_detalles(mensaje)
     historial.append({"rol": ROL_USUARIO, "contenido": pregunta, "sql": None, "metadatos": {}})
     historial.append(mensaje)
+    st.session_state[CLAVE_SQL_EN_CURSO] = None
 
 
 def render_chat() -> None:
@@ -290,10 +332,10 @@ def render_barra_vistas():
     if pendiente and vista == VISTA_DASHBOARD:
         aviso.info(
             f"⏳ Hay una pregunta pendiente en el chat: «{pendiente}». Se procesa en la vista de chat: "
-            "vuelve a 💬 para verla (se generará de nuevo desde el principio).",
+            "vuelve a 💬 para verla (la consulta sigue en proceso; la redacción se retoma al volver).",
         )
     elif pendiente:
-        aviso.caption("⏳ Respondiendo… si cambias de vista ahora, la respuesta se cancela y se vuelve a generar al regresar.")
+        aviso.caption("⏳ Respondiendo… si cambias de vista, la consulta sigue y la respuesta se retoma al regresar.")
     return aviso
 
 

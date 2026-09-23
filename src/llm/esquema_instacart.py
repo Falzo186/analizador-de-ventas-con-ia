@@ -14,8 +14,10 @@ Caché: mismo patrón de `huella_bd` que `src.dashboard.servicio` (Fase 3) /
 `agregados.abrir_agregado` (Fase 2A) para detectar un agregado "rancio" --
 aquí, una descripción de esquema desactualizada. Se guarda en
 `data/cache/esquema_instacart.json` junto con la `huella_bd` que tenía la
-BD al construirse; si la huella actual coincide, se sirve del archivo sin
-tocar la BD más que las 3 consultas baratas de `huella_bd()`.
+BD al construirse y el texto de `REGLAS_DE_NEGOCIO`; si ambos coinciden, se
+sirve del archivo sin tocar la BD más que las 3 consultas baratas de
+`huella_bd()`. (HOTFIX 1: antes la clave era solo la huella, y un cambio de
+reglas seguía sirviendo la descripción vieja.)
 """
 
 from __future__ import annotations
@@ -40,10 +42,15 @@ FILAS_EJEMPLO = 3
 # limitaciones fijas de `scripts/generar_ficha_dataset.py`.
 REGLAS_DE_NEGOCIO = """\
 REGLAS DE NEGOCIO (obligatorias, no las repitas como si fueran una pregunta del usuario)
-- Los pedidos con eval_set = 'test' NO tienen productos en ninguna tabla
-  (ni order_products__prior ni order_products__train): si una pregunta
-  necesita productos, filtra explícitamente eval_set IN ('prior','train')
-  o usa la vista order_products (que ya solo cubre esos dos).
+- La columna eval_set existe SOLO en la tabla orders. La vista
+  order_products y las tablas order_products__prior/__train NO tienen
+  eval_set: nunca escribas order_products.eval_set ni op.eval_set. Los
+  pedidos con eval_set = 'test' no tienen productos, y order_products ya
+  cubre solo 'prior' y 'train': si la pregunta es sobre PRODUCTOS de los
+  pedidos, usa order_products SIN filtrar por eval_set. Si la pregunta es
+  sobre los PEDIDOS en sí (eval_set, order_dow, order_hour_of_day,
+  order_number, days_since_prior_order, user_id), consulta la tabla orders,
+  que es la única que tiene esas columnas.
 - days_since_prior_order está CENSURADO en 30: cualquier intervalo real de
   30 días o más aparece como exactamente 30 en esta columna (no se puede
   distinguir "exactamente 30" de "45" o "90"). Es NULL en el primer pedido
@@ -125,13 +132,15 @@ def construir_descripcion_esquema(
             datos = json.loads(cache_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             datos = None
-        if datos is not None and datos.get("huella_bd") == huella_actual:
+        if (datos is not None and datos.get("huella_bd") == huella_actual
+                and datos.get("reglas") == REGLAS_DE_NEGOCIO):
             return datos["descripcion"]
 
     descripcion = _construir_sin_cache(con)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
-        json.dumps({"huella_bd": huella_actual, "descripcion": descripcion}, indent=2, ensure_ascii=False),
+        json.dumps({"huella_bd": huella_actual, "reglas": REGLAS_DE_NEGOCIO, "descripcion": descripcion},
+                   indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return descripcion

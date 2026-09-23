@@ -386,3 +386,98 @@ def test_pregunta_pendiente_se_avisa_en_dashboard_y_se_procesa_al_volver(app):
     assert at.session_state["pregunta_en_curso"] is None
     assert [m["rol"] for m in at.session_state["historial"]] == ["usuario", "asistente"]
     assert "Hay 21 pedidos en total." in _textos(at)
+
+
+# ---------------------------------------------------------------------------
+# HOTFIX 1: un cambio de vista no repite ni descarta la fase SQL en curso
+# ---------------------------------------------------------------------------
+
+def _res_sql(pregunta: str) -> ri.ResultadoInstacart:
+    return ri.ResultadoInstacart(pregunta=pregunta, sql="SELECT COUNT(*) AS n FROM orders",
+                                 columnas=["n"], filas=[(21,)], intentos=1)
+
+
+def _estado_pendiente(at: AppTest, pregunta: str, en_curso: dict) -> None:
+    at.session_state["pregunta_en_curso"] = pregunta
+    at.session_state["vista"] = "chat"
+    at.session_state[app_instacart.CLAVE_SQL_EN_CURSO] = en_curso
+
+
+def test_regreso_al_chat_reutiliza_la_fase_sql_ya_calculada(app):
+    """Estado que deja un hilo abandonado que SÍ terminó la fase SQL: al
+    volver al chat no se llama otra vez al modelo para generar SQL."""
+    pregunta = "¿Cuántos pedidos hay?"
+    modelo = ModeloSimulado([], ["Hay 21 pedidos en total."])
+    at = app(modelo)
+    hilo_terminado = threading.Thread(target=lambda: None)
+    hilo_terminado.start()
+    hilo_terminado.join()
+    _estado_pendiente(at, pregunta, {"pregunta": pregunta, "hilo": hilo_terminado, "res": _res_sql(pregunta)})
+    at.run()
+
+    assert not list(at.exception)
+    assert modelo.prompts_sql == [], "la fase SQL ya calculada no debe repetirse"
+    assert "Hay 21 pedidos en total." in _textos(at)
+    assert [m["rol"] for m in at.session_state["historial"]] == ["usuario", "asistente"]
+    assert at.session_state[app_instacart.CLAVE_SQL_EN_CURSO] is None
+    assert at.session_state["pregunta_en_curso"] is None
+
+
+def test_regreso_al_chat_espera_al_hilo_que_todavia_calcula(app):
+    """Estado que deja un hilo abandonado que TODAVÍA calcula: se espera a
+    ese hilo en vez de lanzar otro cálculo (antes: una llamada extra a
+    Ollama por cada cambio de vista)."""
+    pregunta = "¿Cuántos pedidos hay?"
+    modelo = ModeloSimulado([], ["Hay 21 pedidos en total."])
+    at = app(modelo)
+    en_curso = {"pregunta": pregunta, "hilo": None, "res": None}
+
+    def _calculo_lento():
+        time.sleep(0.6)
+        en_curso["res"] = _res_sql(pregunta)
+
+    en_curso["hilo"] = threading.Thread(target=_calculo_lento, daemon=True)
+    en_curso["hilo"].start()
+    _estado_pendiente(at, pregunta, en_curso)
+    t0 = time.perf_counter()
+    at.run()
+
+    assert not list(at.exception)
+    assert time.perf_counter() - t0 >= 0.5, "no esperó al hilo que calculaba"
+    assert modelo.prompts_sql == []
+    assert "Hay 21 pedidos en total." in _textos(at)
+    assert len(at.session_state["historial"]) == 2
+
+
+def test_hilo_muerto_sin_resultado_o_pregunta_distinta_si_calculan(app):
+    """Si el hilo murió sin dejar resultado, o el resultado guardado es de
+    otra pregunta, sí se calcula (una sola vez)."""
+    pregunta = "¿Cuántos pedidos hay?"
+    modelo = ModeloSimulado(["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."])
+    at = app(modelo)
+    muerto = threading.Thread(target=lambda: None)
+    muerto.start()
+    muerto.join()
+    _estado_pendiente(at, pregunta, {"pregunta": "otra pregunta", "hilo": muerto, "res": _res_sql("otra")})
+    at.run()
+    assert len(modelo.prompts_sql) == 1
+    assert len(at.session_state["historial"]) == 2
+
+
+@pytest.mark.parametrize("nid", [f"N{i}" for i in range(1, 12)])
+def test_cada_fijado_navega_ida_y_vuelta(app, nid):
+    at = _preguntar(app(ModeloSimulado(
+        ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
+    )), "¿Cuántos pedidos hay?")
+    titulo = f"{nid} — {app_instacart.TITULOS_NECESIDADES[nid]}"
+
+    at.sidebar.button(key=f"fijado_{nid}").click().run()
+    assert not list(at.exception), f"{nid}: {list(at.exception)}"
+    assert any(t.value == titulo for t in at.title)
+
+    at.button(key="vista_chat").click().run()
+    assert _en_chat(at) and len(at.chat_message) == 2
+
+    at.button(key="vista_dashboard").click().run()
+    assert not list(at.exception)
+    assert any(t.value == titulo for t in at.title), f"{nid}: al volver no se conservó la necesidad"

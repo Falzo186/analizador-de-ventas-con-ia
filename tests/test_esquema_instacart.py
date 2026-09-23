@@ -92,3 +92,48 @@ def test_forzar_ignora_la_cache_vigente(con, tmp_path):
     desc1 = construir_descripcion_esquema(con, cache_path=ruta_cache)
     desc2 = construir_descripcion_esquema(con, cache_path=ruta_cache, forzar=True)
     assert desc1 == desc2  # mismos datos -> mismo contenido, pero sí se reconstruyó
+
+
+# ---------------------------------------------------------------------------
+# HOTFIX 1: la regla de eval_set ya no invita a filtrar order_products por él
+# ---------------------------------------------------------------------------
+
+def test_regla_eval_set_dice_que_solo_existe_en_orders():
+    """La regla anterior decía "filtra explícitamente eval_set IN
+    ('prior','train') o usa la vista order_products", y qwen2.5-coder:1.5b
+    combinaba las dos cosas: `order_products op ... WHERE op.eval_set IN (...)`
+    -> Binder Error (docs/HOTFIX1_REPORTE.md)."""
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    assert "eval_set existe SOLO en la tabla orders" in REGLAS_DE_NEGOCIO
+    assert "order_products SIN filtrar por eval_set" in REGLAS_DE_NEGOCIO
+    assert "filtra explícitamente eval_set IN" not in REGLAS_DE_NEGOCIO
+
+
+def test_cache_con_reglas_viejas_se_reconstruye(con, tmp_path):
+    """Misma huella de BD pero reglas distintas: la caché no debe servir la
+    descripción vieja (antes la clave era solo la huella)."""
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    ruta_cache = tmp_path / "esquema.json"
+    construir_descripcion_esquema(con, cache_path=ruta_cache)
+    datos = json.loads(ruta_cache.read_text(encoding="utf-8"))
+    datos["reglas"] = "REGLAS VIEJAS"
+    datos["descripcion"] = "DESCRIPCION VIEJA CON op.eval_set"
+    ruta_cache.write_text(json.dumps(datos), encoding="utf-8")
+
+    desc = construir_descripcion_esquema(con, cache_path=ruta_cache)
+
+    assert "DESCRIPCION VIEJA" not in desc
+    assert REGLAS_DE_NEGOCIO in desc
+    assert json.loads(ruta_cache.read_text(encoding="utf-8"))["reglas"] == REGLAS_DE_NEGOCIO
+
+
+def test_cache_sin_campo_reglas_se_reconstruye(con, tmp_path):
+    """Una caché escrita antes del HOTFIX (sin campo "reglas") se reconstruye."""
+    ruta_cache = tmp_path / "esquema.json"
+    construir_descripcion_esquema(con, cache_path=ruta_cache)
+    datos = json.loads(ruta_cache.read_text(encoding="utf-8"))
+    del datos["reglas"]
+    datos["descripcion"] = "DESCRIPCION PRE-HOTFIX"
+    ruta_cache.write_text(json.dumps(datos), encoding="utf-8")
+
+    assert "PRE-HOTFIX" not in construir_descripcion_esquema(con, cache_path=ruta_cache)
