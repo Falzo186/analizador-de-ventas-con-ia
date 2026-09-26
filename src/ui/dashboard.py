@@ -408,6 +408,22 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
 # Panel principal
 # ---------------------------------------------------------------------------
 
+def render_descarga_json(necesidad_sel: str) -> None:
+    """Fase 10 (entregable de curso): descarga del `data/referencia/{id}.json`
+    tal cual está en disco, solo para `servicio.NECESIDADES_ENTREGA`. Sin
+    caché de sesión, a propósito: `servicio.json_para_descarga` comprueba la
+    huella en cada ejecución (~0.1 s medido con caché tibia) y recalcula si el
+    archivo falta o está rancio, así que nunca sirve un archivo desactualizado."""
+    descarga = servicio.json_para_descarga(necesidad_sel)
+    st.download_button(
+        "⬇️ Descargar JSON de esta necesidad", data=descarga.contenido,
+        file_name=descarga.nombre_archivo, mime="application/json", key=f"descargar_json_{necesidad_sel}",
+        help="El JSON determinista del software (data/referencia/), sin IA, byte a byte como está en disco.",
+    )
+    if not descarga.desde_cache:
+        st.caption(f"⚡ `{descarga.nombre_archivo}` faltaba o estaba desactualizado: se recalculó antes de ofrecerlo.")
+
+
 def render_panel(necesidad_sel: str) -> None:
     """Panel de la necesidad elegida: título, gráficas, valores clave,
     hallazgos, limitaciones y tablas."""
@@ -420,6 +436,9 @@ def render_panel(necesidad_sel: str) -> None:
         f"{insignia} · generado el `{r.fecha_generacion}` (tardó {r.duracion_s:.2f}s en calcularse) · "
         f"esta carga tomó {carga.duracion_carga_s * 1000:.0f}ms."
     )
+
+    if necesidad_sel in servicio.NECESIDADES_ENTREGA:
+        render_descarga_json(necesidad_sel)
 
     col_p, col_d = st.columns(2)
     with col_p:

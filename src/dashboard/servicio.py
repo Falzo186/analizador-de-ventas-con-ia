@@ -223,3 +223,42 @@ def refrescar_todas(
 
     resumen.duracion_total_s = time.perf_counter() - t_inicio_total
     return resumen
+
+
+# ---------------------------------------------------------------------------
+# Fase 10 (entregable de curso): descarga individual del JSON determinista
+# ---------------------------------------------------------------------------
+
+#: Necesidades seleccionadas para la entrega del curso. Las otras 6 siguen
+#: en el dashboard normal, pero no tienen descarga individual ni JSON de IA.
+NECESIDADES_ENTREGA: tuple[str, ...] = ("N1", "N2", "N4", "N9", "N11")
+
+
+@dataclass
+class DescargaJson:
+    """Bytes de `data/referencia/{id}.json` tal cual están en disco, después
+    de asegurar que el archivo está vigente."""
+
+    necesidad_id: str
+    nombre_archivo: str
+    contenido: bytes
+    #: False si hubo que recalcular porque el JSON faltaba o estaba rancio.
+    desde_cache: bool
+
+
+def json_para_descarga(necesidad_id: str, *, out_dir: Path | None = None, **kwargs) -> DescargaJson:
+    """Devuelve el archivo `{id}.json` de la caché en disco, listo para
+    descargar. Primero pasa por `cargar_necesidad()`, que lo recalcula y lo
+    reescribe si falta o si su `huella_bd` no coincide con la BD actual. Por
+    eso los bytes leídos después siempre están vigentes: nunca se sirve un
+    archivo rancio. El contenido no se regenera ni se vuelve a serializar,
+    se lee tal cual del disco."""
+    out_dir = out_dir if out_dir is not None else OUT_DIR_DEFAULT
+    carga = cargar_necesidad(necesidad_id, out_dir=out_dir, **kwargs)
+    ruta = _ruta_json(necesidad_id, out_dir)
+    return DescargaJson(
+        necesidad_id=necesidad_id,
+        nombre_archivo=ruta.name,
+        contenido=ruta.read_bytes(),
+        desde_cache=carga.desde_cache,
+    )

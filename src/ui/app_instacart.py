@@ -31,6 +31,10 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   (`_resultado_sql`). Solo la redacción se reanuda al regresar al chat
   (docs/HOTFIX1_REPORTE.md). Ambas vistas avisan que hay una pregunta
   pendiente.
+- Entrega del curso (Fase 10): en la vista de dashboard, el expander
+  «📋 Entrega» corre el MISMO pipeline del chat con la pregunta fija de
+  N1, N2, N4, N9 y N11 y ofrece el resultado como `{Nx}_ia.json`
+  (`src.llm.formato_entrega`). No toca el chat normal.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ import streamlit as st
 
 from src.analytics import registro
 from src.llm import client
+from src.llm import formato_entrega
 from src.llm import responder_instacart as ri
 from src.ui import dashboard
 
@@ -360,7 +365,58 @@ def _al_enviar_pregunta() -> None:
 def render_dashboard() -> None:
     with st.container(border=True):
         necesidad = dashboard.render_controles(st.container(), horizontal=True)
+    render_entrega_ia()
     dashboard.render_panel(necesidad)
+
+
+# ---------------------------------------------------------------------------
+# Fase 10 (entregable de curso): JSON de la IA local por necesidad
+# ---------------------------------------------------------------------------
+
+#: {necesidad: formato_entrega.EntregaIA} de la última generación de cada una.
+CLAVE_ENTREGAS_IA = "entregas_ia"
+AVISO_ENTREGA_IA = (
+    "Esta salida es la respuesta **libre** de la IA local a la pregunta fija de cada necesidad: pasa por "
+    "las mismas guardas del chat (SQL de solo lectura, timeouts, validación de cifras), pero puede tener "
+    "errores semánticos: un SQL válido que no responde lo que se pregunta (ver README). La referencia "
+    "determinista es el JSON del software («⬇️ Descargar JSON de esta necesidad» en cada panel)."
+)
+
+
+def render_entrega_ia() -> None:
+    entregas = st.session_state.setdefault(CLAVE_ENTREGAS_IA, {})
+    en_curso = bool(st.session_state.get("pregunta_en_curso"))
+    with st.expander("📋 Entrega: JSON de la IA para las 5 necesidades", expanded=bool(entregas)):
+        st.info(AVISO_ENTREGA_IA, icon="ℹ️")
+        config = config_actual()
+        st.caption(f"Modelo: `{config['modelo']}` · esfuerzo {config['esfuerzo']} (⚙️ arriba para cambiarlo).")
+        for nid in formato_entrega.NECESIDADES_ENTREGA:
+            st.markdown(f"**{nid} · {TITULOS_NECESIDADES[nid]}** — {formato_entrega.PREGUNTAS_ENTREGA[nid]}")
+            if st.button(f"Generar JSON de IA para {nid}", key=f"generar_ia_{nid}", disabled=en_curso,
+                         help="Deshabilitado mientras el chat responde una pregunta." if en_curso else None):
+                with st.spinner(f"La IA responde la pregunta de {nid}…"):
+                    entregas[nid] = formato_entrega.generar_entrega_ia(
+                        nid, modelo=config["modelo"], timeout_sql_llm_s=config["timeout_sql_s"],
+                        timeout_respuesta_llm_s=config["timeout_respuesta_s"],
+                    )
+            entrega = entregas.get(nid)
+            if entrega is None:
+                continue
+            if not entrega.ok:
+                render_error({"tipo_error": tipo_de_error(entrega.res)}, entrega.res.error)
+                if entrega.res.sql:
+                    st.code(entrega.res.sql, language="sql")
+                continue
+            if entrega.res.origen_respuesta != "modelo":
+                render_aviso_cifras({"origen_respuesta": entrega.res.origen_respuesta,
+                                     "cifras_rechazadas": entrega.res.cifras_rechazadas})
+            st.json(entrega.documento, expanded=False)
+            st.download_button(
+                f"⬇️ Descargar {formato_entrega.nombre_archivo(nid)}",
+                data=formato_entrega.a_json(entrega.documento).encode("utf-8"),
+                file_name=formato_entrega.nombre_archivo(nid), mime="application/json",
+                key=f"descargar_ia_{nid}",
+            )
 
 
 # ---------------------------------------------------------------------------
