@@ -711,3 +711,602 @@ Son las 2 fallas del entorno que ya estaban antes de la Fase 24 (la librería `o
   y se sanea) y árbitro chequeo que acierta (sin diagnóstico).
 - Los tests de las Fases 11 y 23 que prueban el juez como árbitro pasan `arbitro="juez"` (el comportamiento que
   prueban no cambió). El test del botón del panel de la Fase 11 corre en modo independiente.
+
+## Fase 26 — Corte de la autocorrección en el primer acierto
+
+> Antes de esta fase se ordenó el historial: `ee122e5 fase24` solo tenía las eliminaciones; encima van
+> `698c232` (la Fase 24 completa) y `5c6f2f5` (Fase 25), publicados en `origin/IteracionesLap` sin reescribir
+> nada. Evidencia de esta fase (ignorada por git): `docs/evidencia/fase26/r{1,2,3}/{llama3.1-8b,qwen2.5-coder-7b}/`
+> y `docs/evidencia/fase26/comparacion.md`.
+
+### 1. Por qué
+
+La Fase 25 mostró que las regresiones (un intento correcto seguido de uno incorrecto) **no** las causaba el juez
+ni el árbitro, sino el muestreo a temperatura 0.5. Con el chequeo como árbitro, el intento siguiente a un acierto
+recibe «CORRECTA… conserva el enfoque» y su propio SQL correcto, y aun así llama perdía el acierto el 13 % de las
+veces (12/90) y qwen el 3 % (3/88). Cada intento extra después de acertar solo podía empeorar el estado final.
+
+### 2. El cambio (solo control de flujo)
+
+- `correr_iteraciones`: en modo autocorrección, después de cada intento, si su veredicto es «correcta», se
+  registra `corrida.convergencia[modelo] = k` y se sale del bucle de ese modelo. Con el árbitro «chequeo» (el
+  default) ese veredicto es el del chequeo automático; con `--arbitro juez`, el «correcta» del juez. Cada modelo
+  tiene su propio corte: el grande sigue su cadena aunque el pequeño ya haya convergido.
+- Los intentos que faltan quedan **«no ejecutada (ya convergió en el intento k)»**, no como fallidos ni vacíos:
+  - `CorridaIteraciones.no_ejecutadas(modelo)` y `total_no_ejecutadas`;
+  - el JSON tiene `corta_al_acertar`, `convergencia` y una lista `no_ejecutadas` (modelo, número, etiqueta,
+    estado). `iteraciones` solo trae los intentos ejecutados;
+  - el log `.txt` y el CLI tienen una línea por intento no ejecutado, con ese texto, y «X de N intentos
+    ejecutados, Y no ejecutados porque ya había convergido»;
+  - en el panel hay una tarjeta ⏭️ por intento no ejecutado («no falló, no se corrió»), la secuencia
+    `1❌ → 2✅ → 3⏭️ → 4⏭️ → 5⏭️` y, como métrica principal del modelo, «✅ Convergió en el intento k» o
+    «❌ No convergió (5 de 5 intentos)» en vez del % de correctas, que con corte deja de tener sentido (hay a lo
+    sumo un «correcta» por modelo).
+- `completa` cuenta lo no ejecutado: una cadena cortada **no** se muestra como «corrida interrumpida» (aviso de la
+  Fase 23). Una interrupción antes de converger sigue quedando «en curso».
+- `ResumenModelo` agrega `no_ejecutadas` y `estado_final` (el veredicto del último intento ejecutado).
+- `--sin-corte` (CLI) o `corta_al_acertar=False` reproducen la Fase 25.
+
+**Modo independiente: el corte no aplica** (lancé `ValueError` si se pide). Ese modo existe para medir la
+variabilidad: N muestras desde cero de la misma pregunta. Cortar en el primer acierto eliminaría justo esas
+muestras (si acierta en el intento 1 no queda ninguna más) y sesgaría el % de correctas. Además ahí no hay nada
+que proteger: los intentos no se influyen, y uno extra no puede «perder» un acierto anterior.
+
+### 3. Resultados reales (10 necesidades × hasta 5 intentos, 3 repeticiones por modelo)
+
+```
+python -m src.llm.iteraciones_juez todas --iteraciones 5 --modo autocorreccion --pequeno llama3.1:8b --grande - --timeout 180 --out docs/evidencia/fase26/r1/llama3.1-8b
+python -m src.llm.iteraciones_juez todas --iteraciones 5 --modo autocorreccion --pequeno qwen2.5-coder:latest --grande - --timeout 180 --out docs/evidencia/fase26/r1/qwen2.5-coder-7b
+```
+
+Igual en r2 y r3. Árbitro chequeo (default), medición del juez activa, temperatura 0.5. El 14B no se tocó. «Termina
+en correcto» = el último intento ejecutado coincide con la referencia (chequeo automático, misma regla para todas
+las corridas, recalculado desde las filas guardadas). Los brazos sin corte son las corridas de la Fase 25 y las
+repeticiones del brazo juez (la «juez r1» es la Fase 24).
+
+**¿Cuántas necesidades terminan en estado correcto?** (media de 3 repeticiones; entre paréntesis, cada una)
+
+| Modelo | Brazo | Terminan en correcto | Acertaron alguna vez | Intentos ejecutados | Tiempo por corrida |
+|---|---|---|---|---|---|
+| llama3.1:8b | juez, sin corte (Fases 24/25) | 7.7 (8, 7, 8) | 9.0 (10, 8, 9) | 50 | 5.0 min |
+| llama3.1:8b | chequeo, sin corte (Fase 25) | 8.7 (8, 9, 9) | 9.7 (9, 10, 10) | 50 | 4.9 min |
+| llama3.1:8b | **chequeo + corte (Fase 26)** | **9.7** (10, 10, 9) | 9.7 (10, 10, 9) | **16.0** | **1.6 min** |
+| qwen2.5-coder 7B | juez, sin corte (Fases 24/25) | 8.3 (8, 8, 9) | 9.0 (9, 8, 10) | 50 | 5.0 min |
+| qwen2.5-coder 7B | chequeo, sin corte (Fase 25) | 7.3 (7, 7, 8) | 8.0 (7, 8, 9) | 50 | 5.2 min |
+| qwen2.5-coder 7B | **chequeo + corte (Fase 26)** | **8.7** (9, 8, 9) | 8.7 (9, 8, 9) | **18.3** | **2.2 min** |
+
+Por necesidad, en cuántas de las 3 repeticiones termina en correcto:
+
+| Nec. | llama · juez | llama · chequeo | llama · corte | qwen · juez | qwen · chequeo | qwen · corte |
+|---|---|---|---|---|---|---|
+| N1 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+| N2 | 3/3 | 2/3 | 3/3 | 3/3 | 2/3 | 3/3 |
+| N3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+| N4 | 3/3 | 3/3 | 3/3 | 3/3 | 1/3 | **0/3** |
+| N5 | 1/3 | 2/3 | 2/3 | 2/3 | 1/3 | 2/3 |
+| N6 | 0/3 | 3/3 | 3/3 | 2/3 | 3/3 | 3/3 |
+| N7 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+| N8 | 2/3 | 1/3 | 3/3 | 0/3 | 0/3 | 3/3 |
+| N9 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+| N10 | 2/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+
+Secuencias de la repetición 1 (⏭ = no ejecutado porque ya convergió):
+
+| Nec. | llama3.1:8b | qwen2.5-coder 7B |
+|---|---|---|
+| N1 | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+| N2 | 1✗ 2✗ 3✓ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+| N3 | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+| N4 | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ | 1✗ 2✗ 3✗ 4✗ 5✗ |
+| N5 | 1✗ 2✓ 3⏭ 4⏭ 5⏭ | 1✗ 2✗ 3✓ 4⏭ 5⏭ |
+| N6 | 1✗ 2✓ 3⏭ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+| N7 | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+| N8 | 1✗ 2✓ 3⏭ 4⏭ 5⏭ | 1✗ 2✗ 3✓ 4⏭ 5⏭ |
+| N9 | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+| N10 | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ | 1✓ 2⏭ 3⏭ 4⏭ 5⏭ |
+
+### 4. Lectura
+
+- **El corte resuelve lo que debía resolver.** Las necesidades que terminan en correcto suben de 8.7 a **9.7**
+  (llama) y de 7.3 a **8.7** (qwen) frente a la Fase 25, y de 7.7/8.3 frente al brazo juez. Con corte, «termina
+  en correcto» = «acertó alguna vez» por construcción: ya no se pierde ningún acierto. Es la mejora más grande de
+  las Fases 24-26 y con el costo más bajo: un tercio de los intentos (16-18 de 50) y de 2 a 3 veces menos tiempo.
+- **Lo que el corte NO cambia.** Hasta el primer acierto, el proceso es idéntico al de la Fase 25 (mismos prompts,
+  misma retroalimentación), así que el corte no hace que el modelo acierte **más**, solo que no pierda lo que
+  acertó. La cifra esperada era la columna «acertaron alguna vez» de la Fase 25 (9.7 y 8.0), y salió 9.7 y 8.7.
+  La diferencia de qwen está dentro del ruido: qwen N8 convergió en 3/3 ahora y en 1/3 en la Fase 25, con el mismo
+  proceso.
+- **Lo que queda sin resolver es determinista, no ruido.** qwen N4: 0/3. En las 3 repeticiones, los 15 intentos
+  llevan el mismo error (`HAVING … AND SUM(reordered = 1) > 0`, que excluye los productos con 0 recompras), y el
+  diagnóstico del juez sigue invertido: «Falta el filtro 'SUM(…) > 0' en el HAVING», el mismo de la Fase 25. N5
+  (tamaño del carrito) es el otro punto débil de los dos modelos (2/3). Esto es lo que atacarían los diagnósticos
+  deterministas (comparar el SQL del intento con el de referencia, cláusula por cláusula), que quedaron para
+  después.
+
+### 5. Verificación
+
+`python -m pytest -q` (completo):
+
+```
+FAILED tests/test_app_instacart.py::test_modelos_cargados_lee_api_ps - Assert...
+FAILED tests/test_generar_ficha_dataset.py::test_construir_ficha_coincide_con_dataset_instacart_md
+2 failed, 535 passed, 2 xpassed in 141.27s (0:02:21)
+```
+
+Son las mismas 2 fallas del entorno de las Fases 24-25 (la versión de la librería `ollama` y el separador de rutas de Windows).
+`tests/test_fase26_corte.py` (10 tests):
+- corta en el primer acierto, sin volver a llamar al modelo, y marca el resto como no ejecutado;
+- JSON, log y CLI con «no ejecutada (ya convergió en el intento k)»;
+- sin acierto corre los N intentos;
+- cada modelo tiene su propio corte;
+- `--sin-corte` reproduce la Fase 25;
+- el modo independiente nunca corta y rechaza `corta_al_acertar=True`;
+- con árbitro juez corta en el «correcta» del juez;
+- una interrupción antes de converger sigue «en curso»;
+- el panel muestra «Convergió en el intento k», las tarjetas ⏭️ y la secuencia.
+
+Los tests de fases anteriores que observan lo que pasa **después** de un acierto pasan `corta_al_acertar=False`
+(el comportamiento que prueban no cambió).
+
+## Fase 27 — Bitácora de aprendizaje del chat libre y revisión de UX
+
+> Evidencia (ignorada por git): `docs/evidencia/fase27/`:
+> - `antes/` y `despues/`: capturas del chat y del dashboard;
+> - `experimento_bitacora.jsonl`: el experimento con y sin la lección;
+> - `revisor_real.txt`: el revisor de SQL con 8B/7B sobre la BD real.
+>
+> La bitácora real vive en `data/cache/bitacora_chat.json`.
+
+### Parte 1 — Bitácora de aprendizaje del chat libre
+
+**El problema (reproducido en vivo, antes del cambio, con qwen2.5-coder:1.5b):** dos preguntas distintas en
+la misma sesión repetían la misma confusión de esquema.
+
+- «¿Cuántos pasillos tiene cada departamento?» → `JOIN aisles a ON a.department_id = d.department_id` →
+  `Binder Error: Table "a" does not have a column named "department_id"`. El reintento repitió el error.
+- «¿Qué departamento tiene más pasillos distintos?» → otra variante del mismo malentendido
+  (`Referenced table "d" not found`). El chat no había aprendido nada de la primera.
+
+**Diferencia con el panel de necesidades.** En el chat libre no hay respuesta de referencia, así que nadie puede
+decir si la respuesta final es «correcta». Lo que sí se puede aprender entre preguntas son los errores del SQL
+contra el esquema real. Por eso el juez del chat solo revisa la **sentencia**, nunca la respuesta.
+
+**Qué se implementó:**
+
+1. **`src/llm/bitacora_chat.py`**: bitácora en disco, `data/cache/bitacora_chat.json` (ignorado por git), que
+   sobrevive entre sesiones de Streamlit. Se lee en cada pregunta (es chica) y se escribe de forma atómica.
+   - Cada entrada (`Leccion`) guarda: `pregunta`, `sql`, `detalle` (el error real o el motivo del revisor,
+     recortado a 400 caracteres), `leccion` (una frase), `origen`, `firma`, `veces`, `primera_vez` y `ultima_vez`.
+   - Se deduplica por `firma`: el mismo error de esquema suma `veces` en vez de repetirse.
+2. **Lecciones deterministas a partir del error real de DuckDB** (`leccion_de_error`), sin modelo, con el esquema
+   real (`DESCRIBE`) y los alias del SQL:
+   - columna en la tabla equivocada → «La tabla aisles NO tiene la columna department_id (sus columnas:
+     aisle_id, aisle); department_id está en: departments, products.»;
+   - columna inexistente → dónde sí está;
+   - alias sin declarar;
+   - tabla inexistente → la lista de tablas reales;
+   - agregación anidada → la forma con subconsulta;
+   - GROUP BY incompleto;
+   - timeout → la pista de la Fase 24;
+   - cualquier otro error → «Un SQL anterior falló con: <primera línea>».
+
+   Solo se aprende de errores de **ejecución** (DuckDB o el timeout de la guarda). El modelo caído y la guarda que
+   rechaza una escritura no enseñan nada del esquema.
+3. **`src/llm/revision_sql.py`, revisor de la sentencia**: si el SQL ejecutó, el mismo modelo del chat (temperatura
+   0, JSON) revisa solo la sentencia, frente al esquema real (`DESCRIBE`), la pregunta y las primeras 5 filas:
+   - ¿tiene sentido para la pregunta?;
+   - ¿cada columna está en su tabla y cada JOIN une por columnas que existen en ambas?;
+   - ¿hay señales raras? (promediar un id, agregar la columna equivocada, un filtro o un LIMIT que la pregunta no
+     pide).
+
+   Devuelve `{"sospechoso", "motivo", "leccion"}`. Se le pide prudencia («ante la duda, false»), y un
+   «sospechoso» sin motivo, o una respuesta ilegible, cuentan como no sospechoso.
+4. **Integración** (`responder_pregunta_instacart(..., bitacora=, revisar_sql=)`; solo el chat los pasa, las
+   necesidades y la entrega no cambian):
+   - las lecciones van al **final del prompt de sistema** de SQL (y de su reintento), después de
+     `REGLAS_DE_NEGOCIO`, bajo «LECCIONES APRENDIDAS de errores reales en preguntas anteriores de este chat…»;
+     sin lecciones, el prompt es idéntico al de antes;
+   - el reintento sigue siendo **uno solo**. Si el primer SQL falló, se usa como antes. Si el SQL ejecutó y el
+     revisor lo marca sospechoso, el único reintento se usa con su motivo («Un revisor marcó tu SQL como
+     sospechoso: …»). Si ese reintento no ejecuta, **se conserva el resultado original**;
+   - al terminar la fase SQL (bien o mal) se agregan las lecciones de la pregunta: del error real del primer
+     intento, del error final, de la revisión sospechosa y del reintento fallido. Se deduplican por firma dentro
+     de la misma pregunta, así que el mismo error en los dos intentos cuenta una vez. La bitácora nunca tumba una
+     respuesta: si algo falla al aprender, no se aprende;
+   - la app pasa `Bitacora()` (lee el disco en cada pregunta, así que lo guardado se usa desde la primera pregunta
+     de una sesión nueva) y `revisar_sql` según ⚙️.
+5. **UI**:
+   - en «🔎 Detalles técnicos» de cada respuesta se ven: la revisión de la sentencia (sin problemas / sospechosa y
+     qué pasó con el reintento), cuántas lecciones llevaba el prompt y la lección agregada;
+   - en ⚙️ «Aprendizaje del chat» están: el interruptor del revisor (activo por defecto), la bitácora con sus
+     lecciones (📌 = va en el prompt; ×N = veces) y el botón «🗑️ Borrar la bitácora».
+
+**Límites de tamaño (criterio).** El prompt de sistema de SQL ya mide ~8.4k caracteres (~2.5k tokens) y los
+modelos corren con contexto de 4,096 tokens. La bitácora no puede competir con el esquema ni con la pregunta:
+- **en el prompt**: como máximo **8 lecciones** y **1,900 caracteres** para todo el bloque (~500 tokens, ~12 % del
+  contexto). Cada lección se recorta a **220 caracteres** (una frase). Entran las de más `veces` y, a igualdad,
+  las más recientes: un error que se repite es el que más vale recordar;
+- **en disco**: como máximo **20**. Al pasarse, sale la de menos `veces` y, a igualdad, la más antigua. Así queda
+  margen para que una lección nueva compita con las del prompt sin que el archivo crezca sin límite;
+- el empate de `ultima_vez` (resolución de segundos) se rompe por orden en el archivo. El test del límite encontró
+  que sin eso se descartaba la recién agregada en vez de la más vieja.
+
+**Caso real en el chat (con la app, después del cambio, qwen2.5-coder:1.5b, bitácora vacía al empezar):**
+1. «¿Cuántos pasillos tiene cada departamento?» → el mismo `Binder Error` de `a.department_id`. En disco queda:
+   ```
+   "firma": "columna_en_tabla:aisles.department_id",
+   "leccion": "La tabla aisles NO tiene la columna department_id (sus columnas: aisle_id, aisle); department_id está en: departments, products.",
+   "pregunta": "¿Cuántos pasillos tiene cada departamento?", "veces": 1
+   ```
+   En los detalles se lee: «📓 Lección agregada a la bitácora: La tabla aisles NO tiene la columna department_id…».
+2. «¿Qué departamento tiene más pasillos distintos?» (pregunta distinta) → en los detalles: «📓 El prompt de
+   esta pregunta llevaba 1 lección(es) de la bitácora». **El 1.5b repitió el error de todos modos**
+   (`JOIN aisles a ON d.department_id = a.department_id`). La bitácora lo registró como `veces: 2`, sin duplicar.
+
+**¿La lección cambia el SQL? Experimento controlado** (BD real, temperatura 0, revisor apagado para aislar la
+lección, bitácoras temporales). Las 4 preguntas son: pasillos por departamento, departamento con más pasillos,
+pasillos de produce y pasillos de dairy eggs.
+
+| Modelo | Sin lección: OK / cometen el error `aisles.department_id` | Con la lección: OK / cometen el error |
+|---|---|---|
+| qwen2.5-coder:1.5b | 2/4 · 1/4 | 2/4 · 1/4 |
+| llama3.1:8b | 4/4 · 0/4 | 4/4 · 0/4 |
+| qwen2.5-coder 7B | 3/4 (una tras reintento) · **2/4** | **4/4, todas al primer intento · 0/4** |
+
+- **7B: la lección elimina el error.** Pasillos por departamento falla sin ella y sale bien con ella (personal
+  care 17, pantry 12…). En «dairy eggs», sin ella el primer intento comete el error y el reintento lo arregla; con
+  ella sale al primer intento.
+- **8B**: no comete ese error; la lección no cambia nada.
+- **1.5b**: no la aprovecha. Con la lección cambia de error (alias `d` sin declarar) o lo repite en otra pregunta.
+  Es coherente con lo visto en la Fase 23: el 1.5b casi no usa el contexto que se le da.
+
+Advertencia que aparece en la tabla: «OK» quiere decir que ejecutó, no que sea correcto. Por ejemplo, llama
+resuelve «dairy eggs» con `department_id = 6` fijo (el real es 16) y devuelve los pasillos de otro departamento.
+
+**El revisor con modelos reales** (`revisor_real.txt`, llama3.1:8b y qwen2.5-coder 7B, 2 preguntas cada uno):
+- **Sin falsos positivos** en los 3 SQL correctos.
+- **llama, «dairy eggs»**: marcó como sospechoso el SQL con `department_id = 6`, que efectivamente está mal, pero
+  con un motivo impreciso: «el filtro en el JOIN no está bien escrito», no «el id está inventado». El reintento
+  falló con el `Binder Error` de `aisles.department_id` y se conservó el resultado original, que sigue siendo
+  incorrecto. Quedaron 2 lecciones:
+  - la determinista del error del reintento (precisa);
+  - la del revisor, genérica y algo engañosa: «Los filtros en los JOIN deben estar escritos como condiciones de
+    igualdad entre las columnas de ambas tablas.».
+
+  **Riesgo:** las lecciones del revisor son de peor calidad que las deterministas y también entran al prompt.
+  Pendiente sugerido: darles menos prioridad (o un tope propio), o detectar de forma determinista los ids fijos
+  (`department_id = <número>`) contra el nombre que da la pregunta.
+
+**Tests** (`tests/test_fase27_bitacora.py`, 28):
+- lección determinista del error real de la revisión (`aisles.department_id`, con DuckDB de verdad) y de los
+  otros 5 errores de esquema;
+- persistencia entre instancias, dedup y archivo corrupto;
+- límites (20 en disco, 8 y 1,900 caracteres en el prompt, 220 por lección; descarte de la menos repetida y más
+  vieja);
+- prompt idéntico sin lecciones;
+- **una pregunta falla por el error de esquema conocido → se guarda la lección → una pregunta DISTINTA posterior
+  la recibe en su prompt de sistema**, tanto en el responder como en la app, en la misma sesión;
+- la bitácora se carga del disco al iniciar la app;
+- revisor sospechoso → reintento y lección; sin problemas → nada; reintento fallido → se conserva el original;
+- no se aprende de la guarda ni del modelo caído;
+- sin bitácora ni revisor, nada cambia (necesidades y entrega);
+- el botón para borrar y el interruptor del revisor.
+
+`tests/conftest.py` aísla la bitácora en un archivo temporal para toda la suite: ningún test toca la real. En el
+doble del modelo de los tests de la app, las llamadas del revisor se reconocen por su prompt y se registran
+aparte (`revisiones_hechas`), así que los tests que comparan la lista exacta de llamadas no cambiaron.
+
+### Parte 2 — Rediseño visual (sin tocar la lógica)
+
+Capturas en `docs/evidencia/fase27/antes/` (01-08) y `despues/` (01-09), en el mismo panel (622 px de ancho) y
+con las mismas preguntas.
+
+| Problema (antes) | Cambio (después) |
+|---|---|
+| En el chat, preguntas y respuestas seguidas sin límite claro entre un turno y otro | Cada pregunta con su respuesta en una **tarjeta con borde** (`st.container(border=True)`) |
+| El error de DuckDB partido en párrafos sueltos («Candidate bindings», «LINE 3…») | Primera línea como texto y el resto en un **bloque de código** dentro de la misma alerta |
+| «Detalles» con captions seguidas, que se leían como un solo párrafo | «🔎 Detalles técnicos» con secciones rotuladas: **SQL ejecutado · Primer intento rechazado** (con el error en bloque de código) **· Revisión y bitácora · Datos** |
+| Los colapsables se veían como un párrafo más | **Todos los expanders** con borde **punteado**, fondo tenue y título más chico (`src/ui/estilos.py`), distintos de las tarjetas de borde sólido |
+| Jerarquía plana: la necesidad («N1 — …») en `st.title`, del mismo tamaño que el título de la página | `st.title` = página (💬 chat / 📊 dashboard) · `st.header` = necesidad · `st.subheader` = sección de tarjeta · negrita = rótulo · `caption` = metadatos |
+| Dashboard: el título, el selector, «Actualizar datos» y el PDF en un mismo bloque; luego la Entrega y las Iteraciones **antes** que la necesidad | Título y selector arriba; herramientas en un colapsable «🛠️ Datos y reporte PDF»; divisor; **la necesidad**; divisor; «🧰 Evaluación de la IA» (Iteraciones y Entrega) al final |
+| Panel con subtítulos y texto corrido | Tarjetas en el mismo orden en las 10 necesidades: «❓ Pregunta / 🎯 Decisión» · «✅ Respuesta» (valores clave + redacción) · «📈 Gráfica» · «⚠️ Limitaciones» (siempre visibles) · «🔎 Detalle técnico» (SQL, resultado crudo y parámetros, colapsados) |
+| Espaciado variable | `gap` uniforme entre bloques (0.9rem); las tarjetas usan el padding propio de Streamlit |
+
+**Decisiones:**
+- Dentro del colapsable de herramientas no puede haber otro expander ni `st.status` (Streamlit no los anida). El
+  detalle del último refresco pasó a captions y el progreso del PDF a `st.spinner`.
+- Los tests de UI que buscaban el título de la necesidad en `at.title` buscan ahora `at.header`, y el del chat
+  pasó de `at.subheader` a `at.title`. Los de la etiqueta «Detalles» buscan «🔎 Detalles técnicos».
+- **No se tocó:** la barra de navegación (💬/📊/⚙️). En un panel angosto (<640 px) Streamlit apila las columnas y
+  los tres botones quedan a todo el ancho. Arreglarlo exige cambiar los controles y sus tests; queda como
+  pendiente de UX.
+
+### Verificación
+
+`python -m pytest -q` (completo):
+
+```
+FAILED tests/test_app_instacart.py::test_modelos_cargados_lee_api_ps - Assert...
+FAILED tests/test_generar_ficha_dataset.py::test_construir_ficha_coincide_con_dataset_instacart_md
+2 failed, 563 passed, 2 xpassed in 155.79s (0:02:35)
+```
+
+Son las mismas 2 fallas del entorno de las fases anteriores. Después de la suite, la bitácora real seguía
+intacta (la lección `×2` de la prueba en vivo).
+
+## Fase 28 — Cinco necesidades más analíticas (N1, N2, N8, N9, N10), una consulta cada una
+
+> Mismo patrón que la Fase 24: una sola consulta SQL por necesidad, JOINs según `REGLAS_DE_NEGOCIO`, redacción
+> generada por código, forma de respuesta declarada y caché `data/referencia/Nx.json` invalidada por huella de la
+> BD + pregunta + SQL. Siguen fuera de alcance las preguntas compuestas y las comparaciones entre dos resultados.
+>
+> Evidencia (ignorada por git): `docs/evidencia/fase28/` (corrida real con llama3.1:8b).
+
+### 1. Qué cambió
+
+| | Antes (Fase 24) | Ahora (Fase 28) |
+|---|---|---|
+| N1 | 10 productos más vendidos por unidades | Clientes con la frecuencia de compra más sostenida |
+| N2 | Departamento con más pedidos | Departamento con la tasa de recompra promedio más alta |
+| N8 | Pasillo con más unidades vendidas | Franja horaria con más pedidos |
+| N9 | Producto que más veces va primero al carrito (siempre «Banana», sin valor de negocio) | Los dos productos que más se compran juntos (combo/oferta) |
+| N10 | % de líneas recompradas | % de pedidos 100 % recomprados vs. 100 % nuevos |
+
+**N3, N4, N5, N6 y N7 no cambiaron.** Se verificó campo por campo (título, pregunta, decisión, universo,
+filtros, limitaciones, criterio de corte, forma, columnas, parámetros y SQL) contra la versión del commit
+anterior: idénticas.
+
+**Columnas verificadas antes de escribir el SQL** (`DESCRIBE` de la BD real):
+- `orders`: `order_id`, `user_id`, `eval_set`, `order_number`, `order_dow`, `order_hour_of_day` (UTINYINT, 0-23),
+  `days_since_prior_order`;
+- `order_products`: `order_id`, `product_id`, `add_to_cart_order`, `reordered`;
+- `products`: `product_id`, `product_name`, `aisle_id`, `department_id`;
+- `departments`: `department_id`, `department`.
+
+Los nombres que pedía el enunciado (`user_id`, `days_since_prior_order`, `order_hour_of_day`) son los reales.
+
+### 2. Las 5 nuevas: SQL, resultado real y decisiones
+
+Todos los resultados salen de ejecutar el SQL contra `data/instacart.duckdb`
+(`python -m src.analytics --todas`, tras borrar los `Nx.json` anteriores).
+
+**N1 — Clientes de compra más sostenida** (lista; `user_id` es un identificador numérico).
+```sql
+SELECT user_id, COUNT(order_id) AS total_pedidos, AVG(days_since_prior_order) AS promedio_dias_entre_pedidos
+FROM orders GROUP BY user_id HAVING COUNT(order_id) >= 10
+ORDER BY total_pedidos DESC, promedio_dias_entre_pedidos ASC, user_id LIMIT 10
+```
+- Resultado: cliente 46408 (100 pedidos, 0.23 días), 134572 (0.29), 112044 (0.42), 54485, 100787, 100982,
+  191755, 1024, 91263, 172806 (0.71).
+- Mínimo de pedidos = 10, la mediana de pedidos por cliente (medida: 110,728 de 206,209 clientes tienen ≥10).
+- **Hallazgo:** el dataset guarda como máximo 100 pedidos por cliente y 1,374 clientes llegan a ese tope. El top
+  10 está empatado en 100 pedidos y el orden lo decide el promedio de días; la redacción lo dice. Un promedio de
+  0.23 días significa varios pedidos al día: la limitación advierte que puede ser una cuenta de negocio más que
+  un cliente fiel.
+- La pregunta no fija cuántos: `filas_esperadas = None` y 10 por convención, igual que N3/N4.
+
+**N2 — Departamento con la tasa de recompra promedio más alta** (único).
+```sql
+SELECT d.department, COUNT(*) AS veces_comprado,
+       SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) AS recompras,
+       SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra
+FROM order_products op JOIN products p ON op.product_id = p.product_id
+JOIN departments d ON p.department_id = d.department_id
+GROUP BY d.department ORDER BY tasa_recompra DESC, d.department LIMIT 10
+```
+- Resultado: dairy eggs, 67.0 % (3,773,723 de 5,631,067 líneas); luego beverages 65.4 % y produce 65.1 %.
+- Decisión: «tasa promedio» = proporción de líneas recompradas del departamento (el promedio de `reordered`),
+  no el promedio de las tasas de sus productos. Es la misma definición de tasa que N3/N4.
+
+**N8 — Franja horaria con más pedidos** (único; la hora es un identificador numérico).
+```sql
+SELECT order_hour_of_day, COUNT(*) AS pedidos FROM orders
+GROUP BY order_hour_of_day ORDER BY pedidos DESC, order_hour_of_day
+```
+- Resultado: la hora 10, con 288,418 pedidos (8.4 % de 3,421,083); luego las horas 11 (284,728) y 15 (283,639).
+- La referencia guarda las 24 horas, no un top 10: así la gráfica muestra el día completo.
+
+**N9 — Los dos productos que más se compran juntos** (único; el identificador es el par de nombres).
+```sql
+SELECT pa.product_name AS producto_a, pb.product_name AS producto_b, pares.pedidos_juntos
+FROM (
+    SELECT a.product_id AS id_a, b.product_id AS id_b, COUNT(*) AS pedidos_juntos
+    FROM order_products a
+    JOIN order_products b ON a.order_id = b.order_id AND a.product_id < b.product_id
+    WHERE a.product_id IN (SELECT product_id FROM order_products GROUP BY product_id HAVING COUNT(*) >= 10000)
+      AND b.product_id IN (SELECT product_id FROM order_products GROUP BY product_id HAVING COUNT(*) >= 10000)
+    GROUP BY a.product_id, b.product_id
+) pares
+JOIN products pa ON pares.id_a = pa.product_id JOIN products pb ON pares.id_b = pb.product_id
+ORDER BY pares.pedidos_juntos DESC, producto_a, producto_b LIMIT 10
+```
+- Resultado: Bag of Organic Bananas + Organic Hass Avocado, 64,761 pedidos juntos; luego Bag of Organic Bananas
+  + Organic Strawberries (64,702) y Organic Strawberries + Banana (58,330).
+- **Lo que se midió antes de decidir el SQL:**
+  - el self-join directo tal como lo describe el enunciado se queda **sin memoria**: `Out of Memory Error` a los
+    79 s con el límite de 3.7 GiB del proyecto;
+  - agrupar por `product_id` y traer los nombres después, considerando solo los productos con al menos 10,000
+    pedidos, tarda 3.7 s;
+  - **la poda es exacta, no una aproximación**: un par con K co-ocurrencias exige K pedidos de cada producto, y el
+    par número 10 tiene 42,283 ≥ 10,000, así que ningún par descartado podía entrar al top. Con 5,000 el top sale
+    idéntico. La redacción de la referencia afirma la exactitud solo si se cumple esa condición, y hay un test de
+    integración que la verifica sobre la BD real.
+- **Sin `WITH`:** la guarda del chat (`validar_sql`) exige que la sentencia empiece con `SELECT`. Con un CTE ni la
+  referencia ni el SQL de un modelo pasarían por el panel de iteraciones. Con subconsultas en el `FROM` sigue
+  siendo una sola sentencia; tarda **6.9 s** con las guardas del chat, cerca del límite de 10 s de la guarda
+  (declarado en las limitaciones).
+- Es co-ocurrencia por **volumen**, no afinidad (lift): los productos más populares salen juntos por serlo. Está en
+  las limitaciones, junto con que no hay precios para saber si conviene como combo.
+
+**N10 — Pedidos 100 % recomprados vs. 100 % nuevos** (escalar con dos cifras).
+```sql
+SELECT SUM(CASE WHEN recompradas = lineas THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pct_pedidos_todo_recomprado,
+       SUM(CASE WHEN recompradas = 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pct_pedidos_todo_nuevo,
+       SUM(CASE WHEN recompradas = lineas THEN 1 ELSE 0 END) AS pedidos_todo_recomprado,
+       SUM(CASE WHEN recompradas = 0 THEN 1 ELSE 0 END) AS pedidos_todo_nuevo, COUNT(*) AS pedidos
+FROM (SELECT order_id, COUNT(*) AS lineas, SUM(CASE WHEN reordered = 1 THEN 1 ELSE 0 END) AS recompradas
+      FROM order_products GROUP BY order_id) t
+```
+- Resultado: 21.49 % de los pedidos son 100 % recomprados (719,207) y 11.87 % son 100 % nuevos (397,115), de
+  3,346,083 pedidos con productos; el 66.64 % es mixto.
+- «Frente a» se responde con las dos cifras en una sola fila, no con dos consultas.
+- Limitación: el primer pedido de cada cliente es 100 % nuevo por definición.
+
+### 3. Cambios de infraestructura (reutilizando la de la Fase 24, sin duplicar)
+
+- **`DefNecesidad`** suma tres campos opcionales, con defaults que dejan a N3-N7 igual:
+  - `nombre_es_texto` (N1, N8: el identificador es un número);
+  - `columnas_nombre_extra` (N9: el par);
+  - `columnas_valor_extra` (N10: la segunda cifra).
+
+  `columnas_ordenadas` y la gráfica genérica los usan: el par se grafica como «A + B» en una columna `par`.
+- **Chequeo automático** (`retroalimentacion.coincide_con_referencia`), generalizado:
+  - los identificadores se comparan como texto normalizado o como entero;
+  - en «único», cada identificador de la primera fila se consume antes de buscar la cifra (así la hora 10 no se
+    toma por una cifra) y el par se encuentra en cualquier orden;
+  - en «escalar», todas las cifras de respuesta tienen que estar.
+
+  `chequeo_forma` no pide «columna de texto» cuando el identificador es numérico, y su mensaje para N10 dice
+  «una sola fila (con sus cifras)».
+- **Caché:** sin cambios. Los `Nx.json` viejos de N1, N2, N8, N9 y N10 se borraron y se regeneraron; además, la
+  invalidación por pregunta + SQL los habría descartado igual. Ojo: un cambio solo en el texto de las
+  limitaciones **no** invalida la caché (no está en la firma). Por eso `N9.json` se regeneró a mano después de
+  ajustar una limitación.
+- **Bug encontrado y corregido:** `pdf_vigente()` comparaba solo la huella de la BD de cada necesidad, que no
+  cambia cuando cambia una pregunta. El dashboard habría dicho «✅ El PDF ya está actualizado» con un PDF de las
+  preguntas viejas (verificado: el PDF de la Fase 27 se reportaba vigente). El metadato del PDF guarda ahora
+  también la `huella_contenido` de cada necesidad, y un metadato anterior sin ese campo se toma como
+  desactualizado. Test: `test_pdf_deja_de_estar_vigente_si_cambia_el_contenido_de_una_necesidad`. El PDF real
+  se regeneró (444 KB) y está vigente.
+- Documentación: `docs/NECESIDADES.md` (secciones, formas, tabla de parámetros con `min_pedidos` = 10 y
+  `min_pedidos_producto` = 10,000; el PDF no reporta discrepancias) y `docs/ENTREGA_NECESIDADES.md`.
+
+### 4. Pruebas que fallaron por el cambio de preguntas, y cómo se resolvieron
+
+Primera corrida completa sin tocar ningún test: **33 failed, 532 passed** (de las 33, 2 son las del entorno de
+siempre).
+
+| Tests | Por qué fallaron | Qué se hizo |
+|---|---|---|
+| `test_analytics_necesidades` (12) | Oráculos y valores reales de las 5 preguntas viejas | Oráculos pandas nuevos para N1, N2, N8, N9, N10. Valores reales nuevos. Un test de que cada SQL es una sola sentencia `SELECT` que pasa la guarda. Otro de que el umbral de N9 no cambia el top real |
+| `test_fase25_arbitro` (8), `test_fase26_corte` (5) | Usaban «el SQL de N1 acierta en la fixture»; la N1 nueva pide clientes con ≥10 pedidos y la fixture no tiene ninguno | Pasan a usar N5 (lo que prueban, el árbitro y el corte, no depende de la necesidad) |
+| `test_fase24_retroalimentacion` (2) | Chequeo de forma y coincidencia con columnas de la N2 vieja y con el «top 10 fijo» de la N1 vieja | Actualizados, más un test nuevo para el `user_id`, la hora, el par y las dos cifras |
+| `test_pdf_generador` (1), `test_dashboard_servicio` (1), `test_fase10_entrega` (1), `test_app_instacart` (1) | Palabra clave de la limitación de N2, texto de la pregunta N1, documento de la entrega, panel N9 sin filas en la fixture | Palabras clave nuevas (N1, N2, N5, N8, N9, N10), pregunta tomada de la definición, documento actualizado, N8 en lugar de N9 |
+| `test_analytics_honestidad` (1) | Ya ninguna limitación aclaraba la falta de precios (era la de N1/N8 viejas) | N9 la declara: combo u oferta sin precios ni márgenes |
+
+**El test de no-fuga de la Fase 24 contra la BD real (3 escenarios × 10 necesidades) pasó desde la primera
+corrida con las 5 nuevas.**
+
+### 5. Corrida real con llama3.1:8b (autocorrección, 3 intentos, árbitro chequeo, corte)
+
+| Nec. | Resultado | Qué hizo el modelo |
+|---|---|---|
+| N1 | ✗ ✗ ✗ | Intentó un `JOIN LATERAL` con agregados; el primero ejecutó pero no devolvió filas, y los dos siguientes fallaron con un `Binder Error` (GROUP BY, columna ambigua) |
+| N2 | ✗ ✗ ✗ | Agrupó por `department_id` sin nombre; en el intento 3 dividió la tasa dos veces (`AVG(...) / COUNT(*)`) |
+| N8 | ✓ en el intento 1; 2 y 3 «no ejecutados (ya convergió)» | `GROUP BY order_hour_of_day ORDER BY COUNT(*) DESC LIMIT 1` → la hora 10 (el chequeo la reconoce como identificador numérico) |
+| N9 | ✗ ✗ ✗ por **timeout** | El self-join sin poda supera los 10 s de la guarda en los 3 intentos (22-33 s) |
+| N10 | ✗ ✗ ✗ | Dos `WHERE` con agregados (`Binder Error`) y en el intento 3 calculó el % de **líneas** recompradas (la N10 vieja) |
+
+Las 5 nuevas son bastante más difíciles para un 8B que las de la Fase 24 (donde convergía en 10/10). Sobre todo
+N9: con la guarda de 10 s, el enfoque obvio no puede ejecutar. Se resolvió en la Fase 29 (más abajo).
+
+### 6. Verificación
+
+`python -m pytest -q` (completo, después de los ajustes):
+
+```
+FAILED tests/test_app_instacart.py::test_modelos_cargados_lee_api_ps - Assert...
+FAILED tests/test_generar_ficha_dataset.py::test_construir_ficha_coincide_con_dataset_instacart_md
+2 failed, 579 passed, 2 xpassed in 156.27s (0:02:36)
+```
+
+Son las 2 fallas del entorno de siempre (la librería `ollama` de esta máquina devuelve `datetime`; la ficha
+imprime la ruta con separador de Windows). Después se agregó el test del PDF vigente (verde junto con los del PDF:
+23 passed).
+
+## Fase 29 — N9: límite de ejecución propio y regla de pares de productos
+
+**Problema (Fase 28):** con llama3.1:8b, los 3 intentos de N9 se cortaron por el timeout de 10 s de la guarda.
+Se pidió subir el límite solo para N9 (20-25 s) u optimizar la consulta de referencia, y confirmarlo con una
+corrida real en la que el modelo genere la consulta.
+
+### 1. Medición antes de cambiar nada
+
+En la conexión de la guarda del chat (`abrir_conexion_solo_lectura`: 12 hilos, `memory_limit` por defecto de
+25 GiB), sin límite de tiempo:
+
+| Consulta | Tiempo |
+|---|---|
+| Referencia de N9 (con la poda de ≥10,000 pedidos) | **1.4 s** (los 6.9 s de la Fase 28 eran con `threads=1`, la conexión de la capa analítica) |
+| La que escribió llama (une `products` dos veces y agrupa por `product_name`, pares por `add_to_cart_order`) | **Out of Memory a los 63.5 s** (24.9/25.0 GiB) |
+| Self-join sin poda, agrupando primero por `product_id` | **10.4 s** |
+
+Conclusión: **ni subir el límite ni optimizar la referencia bastaban.** La referencia ya era rápida en esa
+conexión. La consulta del modelo no termina con ningún límite, porque se queda sin memoria. Un índice o una tabla
+auxiliar de conteos por producto acelerarían la referencia, pero no la consulta que escribe el modelo. Lo que
+la hacía inviable era su **forma**: agrupar por nombres después del doble JOIN.
+
+### 2. Cambios
+
+- **Límite propio por necesidad:** `DefNecesidad.timeout_consulta_s`, con None = el del chat (10 s). N9 =
+  **25 s**. `iteraciones_juez.timeout_consulta(nid)` lo resuelve, y lo usan el panel de iteraciones y la
+  entrega de IA (`formato_entrega`) a través del nuevo `responder_pregunta_instacart(..., timeout_consulta_s=)`,
+  que llega hasta `ejecutar_con_guardas` (también en el reintento del revisor). El chat libre y las otras 9
+  necesidades siguen en 10 s. El informe de cada corrida muestra el límite usado, y el caption del panel lo
+  menciona.
+- **Pista de lentitud (`PISTA_TIMEOUT`):** antes decía «evita subconsultas correlacionadas», que aquí no era la
+  causa. Ahora también dice: «si un JOIN multiplica filas (p. ej. order_products consigo misma), agrupa primero
+  por los ids y une products al final». Se activa también ante «Out of Memory», en la retroalimentación y en
+  la bitácora. Mide 200 caracteres, así que cabe entera en una lección de la bitácora.
+- **Regla en `REGLAS_DE_NEGOCIO`:** `order_products` tiene ~33.8 M filas. Para pares de productos del mismo
+  pedido, la regla indica agrupar primero por los dos `product_id` (`a.product_id < b.product_id`) y unir
+  `products` solo al final, y prohíbe agrupar por `product_name` o emparejar con `add_to_cart_order`. Trae una
+  plantilla, igual que las reglas existentes de tasa de recompra y pasillos. La plantilla:
+  - es una sola sentencia `SELECT` que pasa la guarda;
+  - no lleva la poda de la referencia ni ningún valor de la respuesta (test);
+  - tarda 7.4-8.6 s en la conexión de la guarda.
+- **N9.json regenerado:** la limitación «~7 s, cerca del límite de 10 s» ya no era cierta. Ahora dice que el
+  self-join es pesado y que su límite es de 25 s cuando lo genera un modelo.
+
+### 3. Corridas reales con llama3.1:8b
+
+N9, autocorrección, árbitro chequeo, 3 repeticiones × 3 intentos, **sin corte** (para tener 9 consultas
+generadas por brazo). Evidencia en `docs/evidencia/fase29/brazo_a/` y `brazo_b/`.
+
+| Brazo | Timeouts | Out of Memory | Otros errores de SQL | Ejecutaron | Correctas |
+|---|---|---|---|---|---|
+| A: límite de 25 s + pista nueva (sin regla) | **7/9** | 0 | 2 (Binder, Parser) | 0/9 | 0/9 |
+| B: + regla de pares | **0/9** | 0 | 1 (Binder: alias `pares`) | **8/9** | **2/9** |
+
+- **Brazo A:** las 7 consultas que se cortaron agrupaban por `p1.product_name, p2.product_name`. Llama **no
+  adoptó la pista** entre intentos: la recibió 6 veces y repitió la misma forma.
+- **Brazo B:** las 8 consultas que ejecutaron agrupaban por `a.product_id, b.product_id`. Medidas de nuevo en
+  la conexión de la guarda tardan **7.1-10.8 s**, y 2 de ellas pasan de 10 s, así que **también hace falta el
+  límite de 25 s**: con 10 s, la regla sola habría dejado algunos timeouts.
+- **Brazo B, consultas que ejecutaron pero fallaron** (6): ya son errores del modelo, no de tiempo.
+  - 1: quitó el `ORDER BY` externo y el top 2 salió desordenado (el par correcto quedó en la fila 2).
+  - 3: sin ningún `ORDER BY`.
+  - 2: usó `order_products__prior`/`__train` en vez de la vista `order_products`.
+
+**Confirmación:** con el modelo generando la consulta, el timeout **ya no se activa** (0/9 en el brazo B,
+frente a 7/9 en el A). Hacen falta las dos piezas: la regla, para que la consulta sea factible, y los 25 s, para
+que la consulta factible no se corte.
+
+**Costo de la regla:** la plantilla está en el prompt de todas las preguntas, incluido el chat libre. Para N9
+le da al modelo el enfoque (sin la poda ni la respuesta), igual que la regla de tasa de recompra hace con
+N3/N4. Por eso N9 mide ya más «seguir la plantilla» que «descubrir el self-join».
+
+
+### 4. Verificación
+
+- `tests/test_fase29_timeout_n9.py` tiene 8 tests:
+  - solo N9 tiene límite propio;
+  - el panel y la entrega pasan el límite de la necesidad;
+  - el límite llega hasta la guarda y el chat no lo pasa;
+  - la guarda real corta con el límite pedido;
+  - la pista nombra el JOIN que multiplica filas y cubre «Out of Memory»;
+  - la plantilla de la regla agrupa por ids, pasa la guarda y no contiene valores de la respuesta.
+- `python -m pytest -q` (completo): `2 failed, 588 passed, 2 xpassed in 156.55s`. Son las 2 fallas del entorno de
+  siempre (`test_modelos_cargados_lee_api_ps`, `test_construir_ficha_coincide_con_dataset_instacart_md`).
+- El PDF quedó rancio por el cambio de la limitación de N9: `pdf_vigente` lo detectó (la comprobación de
+  contenido de la Fase 28). Se regeneró y vuelve a estar vigente.

@@ -1,20 +1,20 @@
 # Entrega: 10 necesidades en formato petición-necesidad
 
-Fase 24: la entrega cubre las 10 necesidades de una sola consulta de `src/analytics/necesidades.py`. Reemplazan a las 11 anteriores; antes se entregaban 5 de ellas: N1, N2, N4, N9 y N11 de la numeración vieja.
+Fase 24: la entrega cubre las 10 necesidades de una sola consulta de `src/analytics/necesidades.py`. En la Fase 28 se reemplazaron N1, N2, N8, N9 y N10 por preguntas más analíticas. Reemplazan a las 11 anteriores; antes se entregaban 5 de ellas: N1, N2, N4, N9 y N11 de la numeración vieja.
 
 La **necesidad** es la decisión de negocio (`decision`) y la **petición** es la pregunta (`pregunta`), copiadas sin cambios de cada definición (las mismas que `r.decision` y `r.pregunta` en `data/referencia/Nx.json`). Solo la justificación es texto nuevo: cita las tablas y columnas reales del dataset Instacart (`data/instacart.duckdb`, ver `docs/DATASET_INSTACART.md`).
 
-## N1 — Productos más vendidos
+## N1 — Clientes de compra más sostenida
 
-- **Necesidad:** Qué productos asegurar en inventario por volumen.
-- **Petición:** ¿Cuáles son los 10 productos más vendidos por número de unidades?
-- **Por qué se puede responder con esta base de datos:** Cada fila de `order_products` (`__prior` + `__train`) es un producto dentro de un pedido; contar filas por `product_id` y unir con `products.product_name` da las unidades por producto (no hay columna de cantidad: una unidad = una línea).
+- **Necesidad:** A qué clientes dirigir una oferta de fidelización o retención.
+- **Petición:** ¿Quiénes son los clientes con la frecuencia de compra más sostenida (más pedidos totales y menor promedio de días entre pedidos consecutivos)?
+- **Por qué se puede responder con esta base de datos:** `orders.user_id` identifica al cliente y `orders.days_since_prior_order` da los días desde su pedido anterior; agrupando por cliente se cuentan sus pedidos (`COUNT(order_id)`) y se promedian sus intervalos.
 
-## N2 — Departamento con más pedidos
+## N2 — Departamento con mayor tasa de recompra
 
-- **Necesidad:** Qué departamento conviene priorizar en surtido y visibilidad.
-- **Petición:** ¿Qué departamento tiene más pedidos en total?
-- **Por qué se puede responder con esta base de datos:** `order_products.order_id` se une con `products.department_id` y `departments.department`; `COUNT(DISTINCT order_id)` por departamento cuenta los pedidos que tienen al menos un producto de él.
+- **Necesidad:** En qué departamento la clientela ya es fiel (y dónde hay que trabajar la recompra).
+- **Petición:** ¿Qué departamento tiene la tasa de recompra promedio más alta?
+- **Por qué se puede responder con esta base de datos:** `order_products.reordered` (0/1) marca cada recompra; uniendo con `products.department_id` y `departments.department`, la proporción de líneas con `reordered = 1` es la tasa de cada departamento.
 
 ## N3 — Tasa de recompra más alta
 
@@ -46,23 +46,23 @@ La **necesidad** es la decisión de negocio (`decision`) y la **petición** es l
 - **Petición:** ¿Qué pasillo tiene más productos distintos a la venta?
 - **Por qué se puede responder con esta base de datos:** El catálogo es la tabla `products`, con su `aisle_id`; unirla con `aisles.aisle` y contar productos por pasillo.
 
-## N8 — Pasillo con más unidades vendidas
+## N8 — Hora del día con más pedidos
 
-- **Necesidad:** Qué pasillo mueve más volumen (reposición, espacio, personal).
-- **Petición:** ¿Qué pasillo tiene más unidades vendidas en total?
-- **Por qué se puede responder con esta base de datos:** Las líneas de `order_products` se unen con `products.aisle_id` y `aisles.aisle`; contar líneas por pasillo da las unidades.
+- **Necesidad:** En qué horas reforzar personal, repartidores y capacidad de la app.
+- **Petición:** ¿En qué franja horaria del día se concentra el mayor volumen de pedidos?
+- **Por qué se puede responder con esta base de datos:** `orders.order_hour_of_day` (0-23) es la hora de cada pedido; contar pedidos por hora da la hora pico.
 
-## N9 — Producto que se agrega primero
+## N9 — Productos que se compran juntos
 
-- **Necesidad:** Qué producto motiva la compra (candidato a portada o a promoción de entrada).
-- **Petición:** ¿Cuál es el producto que más veces se agrega primero al carrito (add_to_cart_order = 1)?
-- **Por qué se puede responder con esta base de datos:** `order_products.add_to_cart_order` es la posición de cada producto en el carrito; filtrar la posición 1 y contar por `products.product_name`.
+- **Necesidad:** Qué par de productos ofrecer como combo u oferta conjunta.
+- **Petición:** ¿Cuáles son los dos productos que se compran juntos con más frecuencia (candidatos a combo/oferta)?
+- **Por qué se puede responder con esta base de datos:** Dos filas de `order_products` con el mismo `order_id` son dos productos del mismo pedido; un self-join por `order_id` cuenta cuántas veces aparece cada par, y `products.product_name` da los nombres.
 
-## N10 — Porcentaje de líneas recompradas
+## N10 — Pedidos 100% recomprados vs. 100% nuevos
 
-- **Necesidad:** Qué tanto del negocio viene de compras repetidas (peso de la fidelidad).
-- **Petición:** ¿Qué porcentaje de todas las líneas de pedido corresponde a productos recomprados (reordered = 1)?
-- **Por qué se puede responder con esta base de datos:** `order_products.reordered` vale 1 en cada línea de un producto que el usuario ya había comprado; su proporción sobre todas las líneas es el porcentaje.
+- **Necesidad:** Cuánto del negocio es reposición automática y cuánto es exploración (dónde recomendar).
+- **Petición:** ¿Qué porcentaje de los pedidos son 100% de productos recomprados frente a los que son 100% productos nuevos?
+- **Por qué se puede responder con esta base de datos:** Por `order_id`, comparar el número de líneas con el de líneas `reordered = 1` dice si el pedido es 100 % recomprado (todas), 100 % nuevo (ninguna) o mixto.
 
 ## Archivos JSON por necesidad
 

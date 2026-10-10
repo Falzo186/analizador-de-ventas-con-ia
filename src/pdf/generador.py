@@ -520,6 +520,8 @@ def _escribir_metadato(ruta_pdf: Path, resultados: dict[str, ResultadoNecesidad]
     metadato = {
         "fecha_generacion": fecha_generacion,
         "huella_por_necesidad": {nid: _huella_bd_a_dict(resultados[nid]) for nid in NECESIDADES_ORDEN},
+        # Fase 28: la huella de la BD no cambia si cambia la PREGUNTA de una necesidad; la de contenido sí.
+        "contenido_por_necesidad": {nid: resultados[nid].a_dict()["huella_contenido"] for nid in NECESIDADES_ORDEN},
     }
     _ruta_metadato(ruta_pdf).write_text(json.dumps(metadato, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -550,6 +552,10 @@ def pdf_vigente(
             actual = _huella_bd_a_dict(carga.resultado)
             guardada = metadato.get("huella_por_necesidad", {}).get(nid)
             if guardada != actual:
+                return False
+            # Fase 28: también el contenido (pregunta, SQL, resultado). Un metadato sin
+            # este campo es de antes de la Fase 28: no se puede saber, se toma como rancio.
+            if metadato.get("contenido_por_necesidad", {}).get(nid) != carga.resultado.a_dict()["huella_contenido"]:
                 return False
     finally:
         con.close()

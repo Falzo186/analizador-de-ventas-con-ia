@@ -167,16 +167,20 @@ def _ordenado_por_alguna_cifra(filas: list) -> bool:
     return False
 
 
-#: Pista ante una consulta cortada por el timeout de la guarda (el mensaje
-#: de error no dice por qué fue lenta).
-PISTA_TIMEOUT = ("La consulta fue demasiado lenta y se cortó: evita subconsultas correlacionadas (IN, ANY o "
-                 "EXISTS que se recalculan por cada fila) y une las tablas con JOIN directo por sus claves.")
+#: Pista ante una consulta cortada por el timeout de la guarda o sin memoria
+#: (el mensaje de error no dice por qué fue lenta). Fase 29: además de las
+#: subconsultas correlacionadas, nombra el JOIN que multiplica filas: llama3.1
+#: unía products ANTES de agrupar los pares de N9 (63 s y sin memoria); agrupando
+#: por ids tarda 10 s. Cabe en una lección de la bitácora (220 caracteres).
+PISTA_TIMEOUT = ("La consulta fue demasiado lenta y se cortó: evita subconsultas correlacionadas y, si un JOIN "
+                 "multiplica filas (p. ej. order_products consigo misma), agrupa primero por los ids y une "
+                 "products al final.")
 
 
 def chequeo_error(error: str | None) -> list[str]:
     """Pistas deterministas ante un intento que no ejecutó. El error de DuckDB
     se pasa completo aparte; esto solo agrega lo que el mensaje no dice."""
-    if error and "excedió el límite" in error:
+    if error and ("excedió el límite" in error or "Out of Memory" in error):
         return [PISTA_TIMEOUT]
     return []
 
@@ -198,8 +202,10 @@ def chequeo_forma(necesidad: str, columnas: list[str] | None, filas: list | None
         pistas.append(f"La pregunta pide {d.filas_esperadas} filas (un top {d.filas_esperadas}) y tu consulta "
                       f"devolvió {texto_n_filas(n)}.")
     elif d.tipo == nec.ESCALAR and n != 1:
-        pistas.append(f"La pregunta pide un solo número (una fila) y tu consulta devolvió {texto_n_filas(n)} filas.")
-    if n > 0 and d.columna_nombre and not _hay_columna_texto(filas):
+        que = "una sola fila (con sus cifras)" if d.columnas_valor_extra else "un solo número (una fila)"
+        pistas.append(f"La pregunta pide {que} y tu consulta devolvió {texto_n_filas(n)} filas.")
+    # Fase 28: si la entidad se identifica con un número (user_id, la hora), no se exige texto.
+    if n > 0 and d.columna_nombre and d.nombre_es_texto and not _hay_columna_texto(filas):
         pistas.append(f"Tu resultado no trae ninguna columna de texto: la pregunta pide identificar cada "
                       f"{d.entidad} por su nombre, no por su id.")
     return pistas
@@ -215,22 +221,38 @@ def _cerca(x: float, v: float) -> bool:
     return any(abs(c - v) <= TOLERANCIA_RELATIVA * abs(v) for c in (x, x * 100, x / 100))
 
 
+def _clave(x: object) -> object | None:
+    """Identificador comparable: texto normalizado, o el entero si es un
+    número entero (user_id, la hora). Otra cosa no identifica nada."""
+    if isinstance(x, str):
+        return _norm(x)
+    if _es_numero(x) and float(x).is_integer():
+        return int(x)
+    return None
+
+
+def _claves_de_fila(fila) -> set:
+    return {c for c in (_clave(x) for x in fila) if c is not None}
+
+
 def coincide_con_referencia(
     necesidad: str, filas_referencia: list[dict], filas: list | None,
 ) -> tuple[bool, str]:
     """¿El resultado del intento contiene la respuesta de la referencia?
-    - escalar: alguna cifra de la primera fila coincide con el valor (±0.5 %,
+    - escalar: cada cifra de respuesta (`columna_valor` y, Fase 28,
+      `columnas_valor_extra`) está entre las cifras de la primera fila (±0.5 %,
       acepta fracción vs. porcentaje);
-    - único: la primera fila trae el nombre de la referencia y, si trae
-      cifras, alguna coincide con la de la referencia (la pregunta pide el
-      nombre: una fila con solo el nombre correcto cuenta). Compara
-      resultados, no métodos: un SQL con otra métrica que acierta el nombre
-      y no devuelve la cifra cuenta como coincidencia;
-    - lista: si la pregunta fija k filas (N1: 10), al menos el 80 % de los k
-      nombres de la referencia están en las primeras k filas del intento; si no
-      la fija (N3/N4, "¿cuáles...?"), al menos el 80 % de los primeros m
-      nombres del intento (m = min(10, filas del intento), m >= 3) están en el
-      top 10 de la referencia. El orden de los empates no se exige.
+    - único: la primera fila trae el identificador de la referencia (el nombre,
+      o el número si la entidad es numérica; Fase 28: los dos nombres del par
+      de N9) y, si además trae cifras, alguna coincide con la de la
+      referencia (la pregunta pide el identificador: una fila con solo el
+      identificador correcto cuenta). Compara resultados, no métodos;
+    - lista: si la pregunta fija k filas, al menos el 80 % de los k
+      identificadores de la referencia están en las primeras k filas del
+      intento; si no la fija ("¿cuáles...?"), al menos el 80 % de las primeras
+      m filas del intento (m = min(10, filas del intento), m >= 3) traen un
+      identificador del top 10 de la referencia. El orden de los empates no se
+      exige.
     Devuelve (coincide, detalle). El detalle puede citar la referencia: es
     para el panel y el log, no para el modelo."""
     d = nec.DEFINICIONES[necesidad]
@@ -241,28 +263,40 @@ def coincide_con_referencia(
     ref0 = filas_referencia[0]
     primera = list(filas[0])
     if d.tipo == nec.ESCALAR:
-        v = ref0[d.columna_valor]
-        ok = any(_es_numero(x) and _cerca(float(x), float(v)) for x in primera)
-        return ok, f"valor de referencia {v} {'presente' if ok else 'ausente'} en la primera fila"
+        columnas = (d.columna_valor, *d.columnas_valor_extra)
+        presentes = [c for c in columnas
+                     if any(_es_numero(x) and _cerca(float(x), float(ref0[c])) for x in primera)]
+        ok = len(presentes) == len(columnas)
+        detalle = ", ".join(f"{c}={ref0[c]} {'presente' if c in presentes else 'ausente'}" for c in columnas)
+        return ok, f"primera fila: {detalle}"
     if d.tipo == nec.UNICO:
-        nombre, v = _norm(ref0[d.columna_nombre]), ref0[d.columna_valor]
-        ok_nombre = any(isinstance(x, str) and _norm(x) == nombre for x in primera)
-        cifras = [x for x in primera if _es_numero(x)]
+        celdas = list(primera)
+        nombres = [ref0[c] for c in (d.columna_nombre, *d.columnas_nombre_extra)]
+        ok_nombre = True
+        for nombre in nombres:
+            hallado = next((k for k, x in enumerate(celdas) if _clave(x) is not None and _clave(x) == _clave(nombre)), None)
+            if hallado is None:
+                ok_nombre = False
+            else:
+                celdas.pop(hallado)  # el identificador numérico (p. ej. la hora) no cuenta como cifra
+        v = ref0[d.columna_valor]
+        cifras = [x for x in celdas if _es_numero(x)]
         ok_valor = any(_cerca(float(x), float(v)) for x in cifras)
+        rotulo = " + ".join(str(x) for x in nombres)
         if not cifras:
-            # La pregunta pide el nombre ("¿cuál...?"): sin cifras en la fila, basta el nombre.
-            return ok_nombre, f"primera fila: nombre {'sí' if ok_nombre else 'no'} ({ref0[d.columna_nombre]}), sin cifras"
-        return ok_nombre and ok_valor, (f"primera fila: nombre {'sí' if ok_nombre else 'no'} "
-                                        f"({ref0[d.columna_nombre]}), cifra {'sí' if ok_valor else 'no'} ({v})")
-    referencia = {_norm(f[d.columna_nombre]) for f in filas_referencia}
+            # La pregunta pide el identificador ("¿cuál...?"): sin cifras en la fila, basta con él.
+            return ok_nombre, f"primera fila: identificador {'sí' if ok_nombre else 'no'} ({rotulo}), sin cifras"
+        return ok_nombre and ok_valor, (f"primera fila: identificador {'sí' if ok_nombre else 'no'} "
+                                        f"({rotulo}), cifra {'sí' if ok_valor else 'no'} ({v})")
+    referencia = {_clave(f[d.columna_nombre]) for f in filas_referencia}
     if d.filas_esperadas is not None:
         k = d.filas_esperadas
-        obtenidos = {_norm(x) for fila in filas[:k] for x in fila if isinstance(x, str)}
+        obtenidos = set().union(*(_claves_de_fila(fila) for fila in filas[:k]))
         comunes = len(referencia & obtenidos)
         return (comunes >= MIN_COINCIDENCIA_LISTA * len(referencia),
-                f"{comunes}/{len(referencia)} nombres del top coinciden")
+                f"{comunes}/{len(referencia)} identificadores del top coinciden")
     m = min(len(filas_referencia), len(filas))
-    nombres = [next((_norm(x) for x in fila if isinstance(x, str)), None) for fila in filas[:m]]
-    comunes = sum(1 for nombre in nombres if nombre in referencia)
+    comunes = sum(1 for fila in filas[:m] if _claves_de_fila(fila) & referencia)
     return (m >= MIN_FILAS_LISTA_ABIERTA and comunes >= MIN_COINCIDENCIA_LISTA * m,
-            f"{comunes}/{m} de los primeros nombres del intento están en el top {len(filas_referencia)} de la referencia")
+            f"{comunes}/{m} de las primeras filas del intento traen un identificador del top "
+            f"{len(filas_referencia)} de la referencia")

@@ -44,10 +44,15 @@ def datos_grafica(r: ResultadoNecesidad) -> DatosGrafica | None:
     if d.tipo == nec.ESCALAR or d.columna_nombre is None:
         return None
     df = pd.DataFrame(r.tablas[nec.CONSULTA])
+    nombres = [d.columna_nombre, *d.columnas_nombre_extra]
+    # Fase 28: el par de N9 se grafica como "A + B"; un identificador numérico
+    # (user_id, la hora) se grafica como categoría, no como cantidad.
+    categoria = "par" if len(nombres) > 1 else d.columna_nombre
     if not df.empty:
-        df = df[[d.columna_nombre, d.columna_valor]].copy()
+        df[categoria] = df[nombres].astype(str).agg(" + ".join, axis=1)
+        df = df[[categoria, d.columna_valor]].copy()
     return DatosGrafica(
-        df=df, categoria=d.columna_nombre, valor=d.columna_valor,
-        titulo=f"{d.columna_valor} por {d.columna_nombre} (las {len(df)} filas de la consulta de referencia)",
+        df=df, categoria=categoria, valor=d.columna_valor,
+        titulo=f"{d.columna_valor} por {categoria} (las {len(df)} filas de la consulta de referencia)",
         filas_respuesta=d.filas_esperadas if d.filas_esperadas is not None else len(df),
     )

@@ -232,4 +232,6 @@ def test_json_de_otra_definicion_se_recalcula_aunque_la_huella_coincida(tmp_path
 
     assert carga.desde_cache is False
     reescrito = json.loads(ruta.read_text(encoding="utf-8"))
-    assert reescrito["pregunta"] == "¿Cuáles son los 10 productos más vendidos por número de unidades?"
+    from src.analytics.necesidades import DEFINICIONES
+
+    assert reescrito["pregunta"] == DEFINICIONES["N1"].pregunta

@@ -19,6 +19,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from src.dashboard import servicio
+from src.llm import bitacora_chat
 from src.llm import client
 from src.llm import responder_instacart as ri
 from src.pdf import generador as pdf_generador
@@ -28,20 +29,34 @@ from tests.helpers_analytics import construir_fixture
 RUTA_APP = "src/ui/app_instacart.py"
 
 
+#: Fase 27: respuesta del revisor de SQL cuando la sentencia no tiene nada raro.
+REVISION_OK = '{"sospechoso": false, "motivo": "", "leccion": ""}'
+
+
 class ModeloSimulado:
     """Doble del modelo. `sql` son las respuestas de la llamada de SQL en
     orden; `redacciones` las de la redacción en stream (cada una se entrega
     en fragmentos de 1 palabra). Registra los mensajes de usuario."""
 
-    def __init__(self, sql: list[str], redacciones: list[str]):
+    def __init__(self, sql: list[str], redacciones: list[str], revisiones: list[str] | None = None):
         self.sql = list(sql)
         self.redacciones = list(redacciones)
         self.prompts_sql: list[str] = []
-        #: (tipo, modelo, timeout_s) de cada llamada, en orden (Fase 9).
+        #: Fase 27: prompts de SISTEMA de las llamadas de SQL (para ver las lecciones).
+        self.sistemas_sql: list[str] = []
+        #: (tipo, modelo, timeout_s) de cada llamada, en orden (Fase 9). Las del
+        #: revisor de SQL (Fase 27) van aparte, en `revisiones_hechas`.
         self.llamadas: list[tuple[str, str, float | None]] = []
+        #: Fase 27: respuestas del revisor de SQL; sin más, "no sospechoso".
+        self.revisiones = list(revisiones or [])
+        self.revisiones_hechas: list[str] = []
 
     def chat_con_modelo(self, modelo, sistema, usuario, **k):
+        if sistema.startswith("Eres un revisor de consultas SQL"):
+            self.revisiones_hechas.append(usuario)
+            return self.revisiones.pop(0) if self.revisiones else REVISION_OK
         self.prompts_sql.append(usuario)
+        self.sistemas_sql.append(sistema)
         self.llamadas.append(("chat", modelo, k.get("timeout_s")))
         return self.sql.pop(0)
 
@@ -59,8 +74,10 @@ def rutas(tmp_path_factory):
 
 
 @pytest.fixture()
-def app(rutas, monkeypatch):
+def app(rutas, monkeypatch, tmp_path):
     src, tmp = rutas
+    # Fase 27: cada test con su propia bitácora del chat (nunca la de data/cache).
+    monkeypatch.setattr(bitacora_chat, "RUTA_DEFAULT", tmp_path / "bitacora_chat.json")
     for modulo in (servicio, pdf_generador):
         monkeypatch.setattr(modulo, "DB_PATH_DEFAULT", src)
         monkeypatch.setattr(modulo, "OUT_DIR_DEFAULT", tmp / "referencia")
@@ -103,7 +120,7 @@ def test_layout_vista_alternante_arranca_en_chat_a_todo_el_ancho(app):
     # dashboard NO está en pantalla hasta elegirlo.
     at = app(ModeloSimulado([], []))
     assert at.session_state["vista"] == "chat"
-    assert any("Pregúntale a la IA" in s.value for s in at.subheader)
+    assert any("Pregúntale a la IA" in s.value for s in at.title)
     assert not at.radio, "el selector del dashboard no debe estar en la vista de chat"
     assert not any(b.label == "📄 Generar/Actualizar PDF" for b in at.button)
     assert not at.sidebar.radio, "el dashboard no debe quedar en la barra lateral"
@@ -127,7 +144,7 @@ def test_pregunta_muestra_sql_y_respuesta(app):
 
     assert "Hay 21 pedidos en total." in _textos(at)
     assert [c.value for c in at.code] == ["SELECT COUNT(*) AS n FROM orders"]
-    assert any(e.label.startswith("Detalles") for e in at.expander)
+    assert any(e.label.startswith("🔎 Detalles técnicos") for e in at.expander)
     ultimo = at.session_state["historial"][-1]
     assert ultimo["rol"] == "asistente" and ultimo["sql"] == "SELECT COUNT(*) AS n FROM orders"
     assert ultimo["metadatos"]["filas"] == [[21]]
@@ -196,10 +213,10 @@ def test_dashboard_sigue_funcionando_dentro_de_la_app(app):
     # Fase 8: antes usaba at.columns[1] (panel derecho de la Fase 6); ahora
     # se entra a la vista de dashboard con el ícono 📊.
     at.button(key="vista_dashboard").click().run()
-    for nid in ("N5", "N9", "N10"):  # Fase 24: con datos en la fixture chica
+    for nid in ("N5", "N8", "N10"):  # con datos en la fixture chica (Fase 28: N9 usa un umbral de 10,000 pedidos)
         at.radio(key="necesidad_sel").set_value(nid).run()
         assert not list(at.exception), f"{nid}: {list(at.exception)}"
-        assert any(t.value.startswith(f"{nid} —") for t in at.title)
+        assert any(t.value.startswith(f"{nid} —") for t in at.header)
         assert at.metric
     # Usar el dashboard no borra la conversación.
     assert len(at.session_state["historial"]) == 2
@@ -287,7 +304,7 @@ def test_redaccion_en_stream_entrega_fragmentos_y_luego_valida(ollama_que_transm
 # ---------------------------------------------------------------------------
 
 def _en_chat(at: AppTest) -> bool:
-    return any("Pregúntale a la IA" in s.value for s in at.subheader)
+    return any("Pregúntale a la IA" in s.value for s in at.title)
 
 
 def _en_dashboard(at: AppTest) -> bool:
@@ -329,7 +346,7 @@ def test_fijado_de_la_sidebar_abre_el_dashboard_con_esa_necesidad(app):
     assert not list(at.exception)
     assert at.session_state["vista"] == "dashboard"
     assert at.radio(key="necesidad_sel").value == "N3"
-    assert any(t.value == "N3 — Tasa de recompra más alta" for t in at.title)
+    assert any(t.value == "N3 — Tasa de recompra más alta" for t in at.header)
     assert at.sidebar.button(key="fijado_N3").proto.type == "primary"
     assert at.sidebar.button(key="fijado_N1").proto.type == "secondary"
 
@@ -339,7 +356,7 @@ def test_la_necesidad_elegida_sobrevive_a_pasar_por_el_chat(app):
     at.sidebar.button(key="fijado_N7").click().run()
     at.button(key="vista_chat").click().run()
     at.button(key="vista_dashboard").click().run()
-    assert any(t.value.startswith("N7 —") for t in at.title)
+    assert any(t.value.startswith("N7 —") for t in at.header)
 
 
 def test_historial_persiste_al_ir_al_dashboard_y_volver(app):
@@ -481,14 +498,14 @@ def test_cada_fijado_navega_ida_y_vuelta(app, nid):
 
     at.sidebar.button(key=f"fijado_{nid}").click().run()
     assert not list(at.exception), f"{nid}: {list(at.exception)}"
-    assert any(t.value == titulo for t in at.title)
+    assert any(t.value == titulo for t in at.header)
 
     at.button(key="vista_chat").click().run()
     assert _en_chat(at) and len(at.chat_message) == 2
 
     at.button(key="vista_dashboard").click().run()
     assert not list(at.exception)
-    assert any(t.value == titulo for t in at.title), f"{nid}: al volver no se conservó la necesidad"
+    assert any(t.value == titulo for t in at.header), f"{nid}: al volver no se conservó la necesidad"
 
 
 # ---------------------------------------------------------------------------

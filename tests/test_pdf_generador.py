@@ -37,9 +37,13 @@ MARCADORES_NEGACION = (
 # Limitaciones que el PDF debe mostrar sí o sí, verificadas por palabra
 # clave (no texto exacto): son las que cambian cómo se lee la respuesta.
 PALABRAS_CLAVE_CRITICAS = {
-    "N1": ["una unidad = una línea"],
-    "N2": ["count(distinct order_id)"],
+    "N1": ["100 pedidos por cliente"],
+    "N2": ["no es el promedio de las tasas"],
     "N3": ["recompras / veces"],
+    "N5": ["una unidad = una línea"],
+    "N8": ["hora anónima"],
+    "N9": ["co-ocurrencia por volumen"],
+    "N10": ["100% nuevo por definición"],
     "N6": ["censurado en 30"],
     "N7": ["pasillo «missing»"],
 }
@@ -244,3 +248,20 @@ def test_generador_sin_literales_numericos_sospechosos():
         "de layout/estilo, agrégala a LISTA_BLANCA_NUMERICA en este test o nómbrala "
         "como constante ALLCAPS en src/pdf/generador.py"
     )
+
+
+def test_pdf_deja_de_estar_vigente_si_cambia_el_contenido_de_una_necesidad(tmp_path):
+    """Fase 28: al reemplazar una pregunta la huella de la BD no cambia; el PDF
+    tiene que darse por desactualizado igual (compara la huella de contenido)."""
+    import json
+
+    src = construir_fixture(tmp_path)
+    out_dir, pdf = tmp_path / "referencia", tmp_path / "r.pdf"
+    generador.generar_pdf(db_path=src, out_dir=out_dir, out_pdf=pdf, raw_dir=RAW_DIR)
+    assert generador.pdf_vigente(pdf, db_path=src, out_dir=out_dir)
+
+    ruta = out_dir / "N2.json"  # misma huella de BD, mismo SQL y pregunta: solo cambia el contenido
+    data = json.loads(ruta.read_text(encoding="utf-8"))
+    data["hallazgos"] = ["otra redacción"]
+    ruta.write_text(json.dumps(data), encoding="utf-8")
+    assert not generador.pdf_vigente(pdf, db_path=src, out_dir=out_dir)

@@ -1,4 +1,4 @@
-# Necesidades de negocio — definiciones formales (Fase 24)
+# Necesidades de negocio — definiciones formales (Fases 24 y 28)
 
 Documento de referencia para `src/analytics/necesidades.py`. Desde la Fase 24
 hay **10 necesidades de una sola consulta cada una**: una pregunta simple y
@@ -10,6 +10,13 @@ tamaño, impulso y predicción). Esas mezclaban varias preguntas en una ("y",
 historial de git (este archivo, antes del commit de la Fase 24) y en
 `docs/FASE2A_REPORTE.md` / `docs/FASE2B_REPORTE.md`. Las preguntas
 compuestas quedan para una fase futura.
+
+**Fase 28:** N1, N2, N8, N9 y N10 se reemplazaron por preguntas más analíticas
+(clientes de compra sostenida, departamento con mayor tasa de recompra, hora
+pico, par de productos que más se compran juntos, y pedidos 100 % recomprados
+frente a 100 % nuevos). Siguen siendo una sola consulta cada una. N3-N7 no
+cambiaron. Las preguntas anteriores de N1, N2, N8, N9 y N10 están en el
+historial de git y en `docs/CLASIFICACION_FALLOS.md` («Fase 24»).
 
 Ningún número de este documento se copia a mano en el código: el resultado
 de cada necesidad sale de ejecutar su SQL (`python -m src.analytics --todas`)
@@ -29,8 +36,9 @@ el nombre del producto está en `products`; pasillos y departamentos se unen
 SOLO a través de `products`; tasa de recompra = recompras / veces comprado con
 `HAVING COUNT(*) >= 50`.
 
-**Unidades:** el dataset no tiene cantidades. Cada fila de `order_products`
-es un producto dentro de un pedido: una unidad = una línea de pedido.
+**Unidades** (N5): el dataset no tiene cantidades. Cada fila de
+`order_products` es un producto dentro de un pedido: una unidad = una línea de
+pedido.
 
 **Universos:** líneas = vista `order_products` (33,819,106); pedidos con
 productos = 3,346,083; pedidos totales = 3,421,083 (incluye 75,000 `test` sin
@@ -42,40 +50,55 @@ coinciden con la definición actual. Si no, recalcula.
 
 **Forma de la respuesta** (`tipo`), que usan el dashboard y el chequeo
 automático del juez (`src/llm/retroalimentacion.py`):
-- `lista`: las filas son la respuesta (N1: 10, fijado por la pregunta;
-  N3/N4: la pregunta no fija cuántas, la referencia guarda 10 por convención).
-- `unico`: la respuesta es la primera fila; la referencia guarda el top 10
-  como contexto (N2, N7, N8, N9).
-- `escalar`: una fila, un número (N5, N6, N10).
+- `lista`: las filas son la respuesta (N1, N3, N4: la pregunta no fija
+  cuántas, la referencia guarda 10 por convención).
+- `unico`: la respuesta es la primera fila; la referencia guarda el resto como
+  contexto (N2, N7, N9: top 10; N8: las 24 horas).
+- `escalar`: una fila (N5, N6: una cifra; N10: dos cifras).
+
+Fase 28: la entidad puede identificarse con un **número** (N1: `user_id`; N8:
+la hora) o con **dos nombres** (N9: el par), y la respuesta puede tener **más
+de una cifra** (N10). `DefNecesidad` lo declara (`nombre_es_texto`,
+`columnas_nombre_extra`, `columnas_valor_extra`) y el chequeo automático lo
+respeta.
 
 **Parámetros** (los únicos; el PDF verifica estos valores contra el JSON):
 
 | Parámetro | Valor | Dónde | Justificación |
 |---|---|---|---|
-| `top_n` | 10 | N1, N2, N3, N4, N7, N8, N9 | N1 pide los 10 primeros; en N3/N4 es la convención de la referencia; en las de tipo único es el contexto del ranking. |
+| `top_n` | 10 | N1, N2, N3, N4, N7, N9 | En N1/N3/N4 es la convención de la referencia (la pregunta no fija cuántos); en las de tipo único es el contexto del ranking. |
 | `min_compras` | 50 | N3, N4 | Lo fija la pregunta («al menos 50 compras»). |
+| `min_pedidos` | 10 | N1 | Pedidos mínimos de un cliente (la mediana por cliente es 10); no cambia el top, cuyos clientes tienen 100. |
+| `min_pedidos_producto` | 10,000 | N9 | Pedidos mínimos de cada producto del par. Es exacto mientras el par número 10 tenga al menos esas co-ocurrencias (tiene 42,283). Sin él, la consulta se queda sin memoria. |
 
 ---
 
-## N1 — Productos más vendidos
+## N1 — Clientes de compra más sostenida
 
-**Pregunta:** ¿Cuáles son los 10 productos más vendidos por número de unidades?
-**Decisión:** Qué productos asegurar en inventario por volumen.
-**SQL:** `COUNT(*)` de `order_products` unido con `products`, agrupado por
-`product_name`, orden descendente, `LIMIT 10`.
-**Respuesta (medida):** Banana (491,291 unidades), Bag of Organic Bananas
-(394,930), Organic Strawberries (275,577), … Organic Whole Milk (142,813).
+**Pregunta:** ¿Quiénes son los clientes con la frecuencia de compra más sostenida (más pedidos totales y menor promedio de días entre pedidos consecutivos)?
+**Decisión:** A qué clientes dirigir una oferta de fidelización o retención.
+**SQL:** sobre `orders`, por `user_id`: `COUNT(order_id)` (total_pedidos) y
+`AVG(days_since_prior_order)` (promedio_dias_entre_pedidos), `HAVING
+COUNT(order_id) >= 10`, orden por total desc y promedio asc, `LIMIT 10`.
+**Columnas verificadas en el DESCRIBE:** `orders.user_id`,
+`orders.days_since_prior_order`.
+**Respuesta (medida):** cliente 46408 (100 pedidos, 0.23 días en promedio),
+134572 (0.29), 112044 (0.42), … 172806 (0.71).
+**Limitaciones:** el dataset guarda como máximo 100 pedidos por cliente (1,374
+clientes llegan a ese tope), así que entre los primeros el orden lo decide el
+promedio de días. Un promedio menor a 1 día significa varios pedidos el mismo
+día: puede ser una cuenta de negocio más que un cliente fiel.
 
-## N2 — Departamento con más pedidos
+## N2 — Departamento con mayor tasa de recompra
 
-**Pregunta:** ¿Qué departamento tiene más pedidos en total?
-**Decisión:** Qué departamento conviene priorizar en surtido y visibilidad.
-**SQL:** `COUNT(DISTINCT op.order_id)` por `departments.department`
-(order_products → products → departments).
-**Decisión de definición:** "pedidos" = pedidos distintos que tienen al menos
-un producto del departamento. Contar líneas da el mismo primer lugar en este
-dataset (produce), pero con otra cifra: es otra métrica.
-**Respuesta (medida):** produce, en 2,506,247 pedidos distintos.
+**Pregunta:** ¿Qué departamento tiene la tasa de recompra promedio más alta?
+**Decisión:** En qué departamento la clientela ya es fiel (y dónde hay que trabajar la recompra).
+**SQL:** por `departments.department` (order_products → products →
+departments): `SUM(reordered = 1) * 1.0 / COUNT(*)`, orden desc.
+**Decisión de definición:** la tasa del departamento es la de sus líneas (el
+«promedio» de `reordered`), no el promedio de las tasas de sus productos.
+**Respuesta (medida):** dairy eggs, 67.0 % (3,773,723 de 5,631,067 líneas);
+luego beverages (65.4 %) y produce (65.1 %).
 
 ## N3 — Tasa de recompra más alta
 
@@ -130,25 +153,50 @@ distintos que sí aparecen en `order_products` da el mismo top en este dataset.
 pasillo asignado; el primer pasillo real es candy chocolate (1,246). La
 redacción de la referencia dice ambas cosas.
 
-## N8 — Pasillo con más unidades vendidas
+## N8 — Hora del día con más pedidos
 
-**Pregunta:** ¿Qué pasillo tiene más unidades vendidas en total?
-**Decisión:** Qué pasillo mueve más volumen (reposición, espacio, personal).
-**SQL:** `COUNT(*)` de `order_products` por `aisles.aisle` (vía `products`).
-**Respuesta (medida):** fresh fruits (3,792,661 unidades), luego fresh
-vegetables (3,568,630).
+**Pregunta:** ¿En qué franja horaria del día se concentra el mayor volumen de pedidos?
+**Decisión:** En qué horas reforzar personal, repartidores y capacidad de la app.
+**SQL:** `COUNT(*)` de `orders` por `order_hour_of_day`, orden desc (las 24 horas).
+**Columna verificada en el DESCRIBE:** `orders.order_hour_of_day` (0-23).
+**Decisión de definición:** la franja es la hora entera; se cuentan pedidos
+(incluidos los `test`), no productos.
+**Respuesta (medida):** la hora 10, con 288,418 pedidos (8.4 % de 3,421,083);
+luego las horas 11 (284,728) y 15 (283,639). La hora es anónima (zona horaria
+desconocida).
 
-## N9 — Producto que se agrega primero
+## N9 — Productos que se compran juntos
 
-**Pregunta:** ¿Cuál es el producto que más veces se agrega primero al carrito (add_to_cart_order = 1)?
-**Decisión:** Qué producto motiva la compra (candidato a portada o a promoción de entrada).
-**SQL:** `COUNT(*)` por `product_name` con `add_to_cart_order = 1`.
-**Respuesta (medida):** Banana (115,521 veces), luego Bag of Organic Bananas
-(82,877).
+**Pregunta:** ¿Cuáles son los dos productos que se compran juntos con más frecuencia (candidatos a combo/oferta)?
+**Decisión:** Qué par de productos ofrecer como combo u oferta conjunta.
+**SQL:** self-join de `order_products` por `order_id` con
+`a.product_id < b.product_id`, entre los productos con al menos 10,000
+pedidos, `COUNT(*)` por par, y JOIN a `products` (dos veces) para los nombres.
+Una sola sentencia: sin `WITH` (la guarda del chat solo acepta `SELECT`), con
+subconsultas en el `FROM`.
+**Por qué el umbral:** sin él, el self-join sobre 33.8M líneas se queda sin
+memoria con el límite de 4 GB del proyecto (medido: 79 s y Out of Memory). Es
+exacto: un par con K co-ocurrencias exige K pedidos de cada producto, y el par
+número 10 tiene 42,283 ≥ 10,000 (con 5,000 el top sale idéntico). Tarda ~7 s
+con `threads=1` (la capa analítica) y 1.4 s en la conexión de la guarda del chat.
+**Límite propio (Fase 29):** cuando un modelo genera el SQL de N9 (panel de
+iteraciones y entrega de IA), la guarda de DuckDB corta a los 25 s, no a los 10 s
+del chat (`DefNecesidad.timeout_consulta_s`).
+**Respuesta (medida):** Bag of Organic Bananas + Organic Hass Avocado (64,761
+pedidos juntos); luego Bag of Organic Bananas + Organic Strawberries (64,702)
+y Organic Strawberries + Banana (58,330).
+**Limitaciones:** mide volumen, no afinidad (los productos más vendidos salen
+juntos por ser populares). Además, el dataset no tiene precios.
 
-## N10 — Porcentaje de líneas recompradas
+## N10 — Pedidos 100 % recomprados vs. 100 % nuevos
 
-**Pregunta:** ¿Qué porcentaje de todas las líneas de pedido corresponde a productos recomprados (reordered = 1)?
-**Decisión:** Qué tanto del negocio viene de compras repetidas (peso de la fidelidad).
-**SQL:** `SUM(reordered = 1) * 100.0 / COUNT(*)` sobre `order_products`.
-**Respuesta (medida):** 59.01% (19,955,360 de 33,819,106 líneas).
+**Pregunta:** ¿Qué porcentaje de los pedidos son 100% de productos recomprados frente a los que son 100% productos nuevos?
+**Decisión:** Cuánto del negocio es reposición automática y cuánto es exploración (dónde recomendar).
+**SQL:** por `order_id` (subconsulta), cuántas líneas tiene y cuántas son
+`reordered = 1`; afuera, el % de pedidos con todas recompradas y con ninguna.
+Una sola consulta y una sola fila con las dos cifras.
+**Respuesta (medida):** 21.49 % de los pedidos son 100 % recomprados (719,207,
+«piloto automático») y 11.87 % son 100 % nuevos (397,115, «exploratorios»), de
+3,346,083 pedidos con productos; el 66.64 % mezcla las dos cosas.
+**Limitaciones:** el primer pedido de cada cliente es 100 % nuevo por
+definición, así que infla los «exploratorios».

@@ -68,9 +68,10 @@ import streamlit as st
 from src.analytics import registro
 from src.llm import client
 from src.llm import formato_entrega
+from src.llm import bitacora_chat
 from src.llm import iteraciones_juez as ij
 from src.llm import responder_instacart as ri
-from src.ui import dashboard
+from src.ui import dashboard, estilos
 
 #: Turnos previos (pregunta + SQL) que se mandan como contexto de
 #: seguimiento. El prompt de SQL ya ocupa ~1,742 tokens de los 4,096 con
@@ -110,6 +111,8 @@ ESFUERZOS: dict[str, tuple[float, float]] = {
 ESFUERZO_DEFAULT = "Medio"
 CLAVE_MODELO = "modelo_sel"
 CLAVE_ESFUERZO = "esfuerzo_sel"
+#: Fase 27: revisar la sentencia SQL del chat con el revisor (una llamada más al modelo).
+CLAVE_REVISAR_SQL = "revisar_sql_sel"
 #: Fase 11: configuración del modo de iteraciones con juez (popover ⚙️).
 CLAVE_ITERACIONES = "iteraciones_sel"
 CLAVE_MODELO_PEQUENO = "modelo_pequeno_sel"
@@ -180,6 +183,7 @@ def config_actual() -> dict:
     return {
         "modelo": st.session_state.get(CLAVE_MODELO) or client.modelo_actual_instacart(),
         "esfuerzo": esfuerzo, "timeout_sql_s": timeout_sql, "timeout_respuesta_s": timeout_resp,
+        "revisar_sql": bool(st.session_state.get(CLAVE_REVISAR_SQL, True)),
     }
 
 
@@ -216,6 +220,10 @@ def mensaje_asistente(res: ri.ResultadoInstacart, contexto: list[tuple[str, str]
             "filas": None if res.filas is None else [list(f) for f in res.filas[:MAX_FILAS_HISTORIAL]],
             "n_filas": None if res.filas is None else len(res.filas),
             "contexto_usado": len(contexto),
+            "revision_sql": res.revision_sql,
+            "reintento_por_revision": res.reintento_por_revision,
+            "lecciones_nuevas": list(res.lecciones_nuevas),
+            "lecciones_en_prompt": res.lecciones_en_prompt,
             "modelo": config["modelo"],
             "esfuerzo": config["esfuerzo"],
             "timeouts_s": (config["timeout_sql_s"], config["timeout_respuesta_s"]),
@@ -235,9 +243,17 @@ _TITULOS_ERROR = {
 }
 
 
+def _texto_y_bloque(contenido: str) -> str:
+    """Primera línea como texto y, si el mensaje sigue (p. ej. «Candidate
+    bindings» y «LINE 3: …» de DuckDB), el resto en un bloque de código: así
+    se lee como un solo mensaje y no como párrafos sueltos (Fase 27, UX)."""
+    primera, _, resto = (contenido or "").strip().partition("\n")
+    return primera + (f"\n\n```text\n{resto.strip()}\n```" if resto.strip() else "")
+
+
 def render_error(meta: dict, contenido: str) -> None:
     tipo = meta.get("tipo_error") or "error"
-    st.error(f"**{_TITULOS_ERROR[tipo]}.** {contenido}", icon=_ICONOS_ERROR[tipo])
+    st.error(f"**{_TITULOS_ERROR[tipo]}.** {_texto_y_bloque(contenido)}", icon=_ICONOS_ERROR[tipo])
 
 
 def render_aviso_cifras(meta: dict) -> None:
@@ -250,21 +266,47 @@ def render_aviso_cifras(meta: dict) -> None:
         )
 
 
+def render_aprendizaje(meta: dict) -> None:
+    """Fase 27: revisión de la sentencia SQL y bitácora de esta pregunta."""
+    rev = meta.get("revision_sql")
+    if rev:
+        if rev.get("sospechoso"):
+            desenlace = ("se reintentó con ese motivo" if meta.get("reintento_por_revision") else
+                         "el reintento no ejecutó; se conservó el resultado original" if rev.get("reintento_error") else
+                         "no quedaban reintentos")
+            st.caption(f"🧑‍⚖️ Revisión de la sentencia: ⚠️ sospechosa — {rev.get('motivo')} ({desenlace}).")
+        else:
+            st.caption("🧑‍⚖️ Revisión de la sentencia: sin problemas señalados.")
+    if meta.get("lecciones_en_prompt"):
+        st.caption(f"📓 El prompt de esta pregunta llevaba {meta['lecciones_en_prompt']} lección(es) de la bitácora.")
+    for leccion in meta.get("lecciones_nuevas") or []:
+        st.caption(f"📓 Lección agregada a la bitácora: {leccion}")
+
+
 def render_detalles(mensaje: dict) -> None:
+    """Fase 27 (UX): el detalle técnico, colapsado y con secciones rotuladas
+    (SQL · intentos · revisión y bitácora · datos), en vez de captions seguidas."""
     meta = mensaje["metadatos"]
-    with st.expander("Detalles: SQL, intentos y datos", expanded=False):
+    with st.expander("🔎 Detalles técnicos: SQL, intentos y datos", expanded=False):
+        st.markdown("**SQL ejecutado**")
         if mensaje["sql"]:
             st.code(mensaje["sql"], language="sql")
         else:
             st.caption("No se llegó a generar SQL.")
         if meta.get("motivo_reintento"):
-            st.caption(f"Reintento: el primer SQL se rechazó por: {meta['motivo_reintento']}")
+            st.markdown("**Primer intento rechazado**")
+            st.caption("Reintento: el primer SQL se rechazó por:")
+            st.code(meta["motivo_reintento"], language="text")
+        if meta.get("revision_sql") or meta.get("lecciones_en_prompt") or meta.get("lecciones_nuevas"):
+            st.markdown("**Revisión y bitácora**")
+        render_aprendizaje(meta)
         st.caption(
             f"Intentos de SQL: {meta.get('intentos', 0)} · contexto: {meta.get('contexto_usado', 0)} "
             f"turno(s) previo(s) · modelo: {meta.get('modelo')}"
             + (f" · redacción: {meta['origen_respuesta']}" if meta.get("origen_respuesta") else "")
         )
         if meta.get("filas") is not None:
+            st.markdown("**Datos**")
             st.dataframe(pd.DataFrame(meta["filas"], columns=meta["columnas"]), use_container_width=True)
             if meta["n_filas"] > MAX_FILAS_HISTORIAL:
                 st.caption(f"Se muestran {MAX_FILAS_HISTORIAL} de {meta['n_filas']:,} filas.")
@@ -333,6 +375,8 @@ def _resultado_sql(pregunta: str, contexto: list[tuple[str, str]], config: dict)
         pregunta, db_path=ri.DB_PATH_DEFAULT, redactar=False, contexto=contexto,
         modelo=config["modelo"], timeout_sql_llm_s=config["timeout_sql_s"],
         timeout_respuesta_llm_s=config["timeout_respuesta_s"],
+        # Fase 27: la bitácora del chat (en disco) y el revisor de la sentencia SQL.
+        bitacora=bitacora_chat.Bitacora(), revisar_sql=config.get("revisar_sql", True),
     )
     return dataclasses.replace(en_curso["res"])
 
@@ -341,9 +385,10 @@ def responder_en_vivo(pregunta: str) -> None:
     historial = st.session_state["historial"]
     contexto = contexto_de_seguimiento(historial)
     config = st.session_state.get(CLAVE_CONFIG_EN_CURSO) or config_actual()
-    with st.chat_message("user"):
+    tarjeta = st.container(border=True)
+    with tarjeta.chat_message("user"):
         st.markdown(pregunta)
-    with st.chat_message("assistant"):
+    with tarjeta.chat_message("assistant"):
         with st.status("Generando y ejecutando la consulta…", expanded=False) as estado:
             res = _resultado_sql(pregunta, contexto, config)
             estado.update(label="Consulta lista" if res.ok else "La consulta no se pudo completar",
@@ -367,14 +412,18 @@ def responder_en_vivo(pregunta: str) -> None:
 
 
 def render_chat() -> None:
-    st.subheader("💬 Pregúntale a la IA (Instacart)")
+    st.title("💬 Pregúntale a la IA (Instacart)")
     st.caption(
         f"Modelo local: `{config_actual()['modelo']}` · esfuerzo {config_actual()['esfuerzo']} "
         "(⚙️ arriba para cambiarlo). Cada respuesta sale de una consulta SQL "
         "de solo lectura sobre los datos reales; el SQL queda visible en «Detalles»."
     )
-    for mensaje in st.session_state["historial"]:
-        render_mensaje(mensaje)
+    # Fase 27 (UX): cada pregunta con su respuesta en una tarjeta propia.
+    historial = st.session_state["historial"]
+    for k in range(0, len(historial), 2):
+        with st.container(border=True):
+            for mensaje in historial[k:k + 2]:
+                render_mensaje(mensaje)
 
     st.chat_input(
         "Escribe tu pregunta sobre los pedidos de Instacart…", key="chat_input", on_submit=_al_enviar_pregunta,
@@ -399,11 +448,16 @@ def _al_enviar_pregunta() -> None:
 # ---------------------------------------------------------------------------
 
 def render_dashboard() -> None:
-    with st.container(border=True):
-        necesidad = dashboard.render_controles(st.container(), horizontal=True)
-    render_entrega_ia()
-    render_iteraciones(necesidad)
+    """Fase 27 (UX): título y selector, el panel de la necesidad (el contenido)
+    y, separadas por un divisor, las herramientas de evaluación de la IA."""
+    necesidad = dashboard.render_controles(st.container(), horizontal=True)
+    st.divider()
     dashboard.render_panel(necesidad)
+    st.divider()
+    st.subheader("🧰 Evaluación de la IA")
+    st.caption("Herramientas para medir a la IA local contra la referencia del software; no cambian el panel de arriba.")
+    render_iteraciones(necesidad)
+    render_entrega_ia()
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +542,8 @@ AVISO_MODO = {
         "modelo** su SQL, el error exacto o la forma del resultado (filas y columnas), un chequeo de forma "
         "automático, el veredicto del **chequeo automático** y, si falló, el **diagnóstico del enfoque** del "
         "juez, saneado: nunca un valor de la referencia. Mide si el modelo **converge** a la respuesta "
-        "correcta cuando se le dice en qué falló."
+        "correcta cuando se le dice en qué falló. La cadena **se corta en el primer acierto**: los intentos "
+        "siguientes quedan como «no ejecutados (ya convergió)»."
     ),
     ij.MODO_INDEPENDIENTE: (
         "**Modo independiente:** cada intento parte de cero (misma pregunta, sin ver los anteriores). "
@@ -576,18 +631,30 @@ def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
     resumen = corrida.resumen()
     columnas = st.columns(len(resumen))
     for col, (etiqueta, r) in zip(columnas, zip(("Pequeño", "Grande"), resumen.values())):
-        col.metric(f"{etiqueta}: {r.modelo}", f"{r.pct_correctas:.0f}% correctas",
-                   help="Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo "
-                        f"(árbitro: {'chequeo automático' if corrida.arbitro == ij.ARBITRO_CHEQUEO else 'juez-LLM'}).")
+        arbitro = "chequeo automático" if corrida.arbitro == ij.ARBITRO_CHEQUEO else "juez-LLM"
+        if corrida.corta_al_acertar:
+            # Fase 26: con corte al primer acierto, lo que cuenta es en qué estado termina la cadena.
+            conv = corrida.convergencia.get(r.modelo)
+            col.metric(f"{etiqueta}: {r.modelo}",
+                       f"✅ Convergió en el intento {conv}" if conv else
+                       f"❌ No convergió ({r.n} de {corrida.n_iteraciones} intentos)",
+                       help=f"La cadena se corta en el primer intento «correcta» (árbitro: {arbitro}); "
+                            "los intentos siguientes no se ejecutan.")
+        else:
+            col.metric(f"{etiqueta}: {r.modelo}", f"{r.pct_correctas:.0f}% correctas",
+                       help=f"Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo "
+                            f"(árbitro: {arbitro}).")
         col.caption(f"{r.correctas} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
-                    f"{r.sin_veredicto} sin veredicto (de {r.n} registradas de {corrida.n_iteraciones})")
+                    f"{r.sin_veredicto} sin veredicto (de {r.n} ejecutadas de {corrida.n_iteraciones}"
+                    + (f"; {r.no_ejecutadas} no ejecutadas porque ya convergió" if r.no_ejecutadas else "") + ")")
         col.caption(("Primer «correcta»: intento " + str(r.primer_correcto)) if r.primer_correcto
                     else "Ningún intento «correcta».")
         col.caption(f"Chequeo automático: {r.coincidencias} de {r.n} coinciden con la referencia"
                     + (f" (la primera, en el intento {r.primera_coincidencia})" if r.primera_coincidencia else "")
                     + ".")
         col.caption("Secuencia: " + " → ".join(
-            f"{it.numero}{_ICONOS_VEREDICTO[it.veredicto]}" for it in corrida.de_modelo(r.modelo)))
+            [f"{it.numero}{_ICONOS_VEREDICTO[it.veredicto]}" for it in corrida.de_modelo(r.modelo)]
+            + [f"{k}⏭️" for k in corrida.no_ejecutadas(r.modelo)]))
         if corrida.arbitro == ij.ARBITRO_CHEQUEO and r.juez_opiniones:
             col.caption(f"⚖️ Juez-LLM (solo comparación): {r.juez_correctas} de {r.juez_opiniones} «correcta»; "
                         f"de acuerdo con el chequeo en {r.juez_acuerdos} de {r.juez_opiniones} "
@@ -674,7 +741,9 @@ def render_iteraciones(necesidad: str) -> None:
 
         st.markdown(f"**Resultado** · {corrida.timestamp} · modo {ETIQUETAS_MODO[corrida.modo].lower()} · "
                     f"temperatura {corrida.temperatura} (juez {corrida.temperatura_juez}) · "
-                    f"{len(corrida.iteraciones)} de {corrida.total_esperado} intentos registrados")
+                    f"{len(corrida.iteraciones)} de {corrida.total_esperado} intentos ejecutados"
+                    + (f", {corrida.total_no_ejecutadas} no ejecutados porque ya había convergido"
+                       if corrida.total_no_ejecutadas else ""))
         if not corrida.completa:
             st.warning(f"Corrida interrumpida: se registraron {len(corrida.iteraciones)} de "
                        f"{corrida.total_esperado} intentos. Se muestran todos los que alcanzaron a terminar; "
@@ -684,6 +753,9 @@ def render_iteraciones(necesidad: str) -> None:
             with pestana:
                 for it in corrida.de_modelo(modelo):
                     render_iteracion(it)
+                for k in corrida.no_ejecutadas(modelo):
+                    st.info(f"⏭️ Intento {k} de {corrida.n_iteraciones} · `{modelo}` → "
+                            f"{ij.texto_no_ejecutada(corrida.convergencia[modelo])}: no falló, no se corrió.")
         c1, c2 = st.columns(2)
         c1.download_button(
             f"⬇️ {ij.nombre_archivo_texto(necesidad)} (log legible)", data=ij.a_texto(corrida).encode("utf-8"),
@@ -776,10 +848,14 @@ def render_configuracion() -> None:
                           "cargado · Extremo: 14b recién cargado.")
     t_sql, t_resp = ESFUERZOS[st.session_state[CLAVE_ESFUERZO]]
     st.caption(f"Timeout por llamada: {t_sql:.0f} s (SQL) · {t_resp:.0f} s (respuesta). "
-               "El timeout de la consulta en DuckDB (10 s) es una guarda y no cambia.")
+               "El timeout de la consulta en DuckDB (10 s) es una guarda y no cambia con el esfuerzo "
+               "(en el panel de iteraciones, N9 usa 25 s: su self-join es pesado).")
 
     st.divider()
     render_config_iteraciones(modelos)
+
+    st.divider()
+    render_config_bitacora()
 
     st.divider()
     st.markdown("**Memoria de Ollama**")
@@ -813,6 +889,30 @@ def render_configuracion() -> None:
             st.success(f"Liberado: {', '.join(liberados)}. El estado de arriba es el de `/api/ps` después de liberar.")
         for e in errores:
             st.error(e)
+
+
+def _borrar_bitacora() -> None:
+    bitacora_chat.Bitacora().borrar()
+
+
+def render_config_bitacora() -> None:
+    """Fase 27: bitácora de aprendizaje del chat (en disco) y revisor de SQL."""
+    st.markdown("**Aprendizaje del chat**")
+    st.checkbox("Revisar cada SQL del chat con el modelo (juez de la sentencia)", value=True, key=CLAVE_REVISAR_SQL,
+                help="Una llamada más por pregunta: el modelo revisa si la SENTENCIA tiene sentido para la "
+                     "pregunta y usa columnas y JOINs reales (no si la respuesta es correcta: no hay referencia). "
+                     "Si la marca sospechosa, se reintenta una vez.")
+    bitacora = bitacora_chat.Bitacora()
+    lecciones = bitacora.cargar()
+    en_prompt = {x.firma for x in bitacora.para_prompt()}
+    st.caption(f"📓 Bitácora: {len(lecciones)} lección(es) guardada(s) en `{bitacora.ruta.as_posix()}`; "
+               f"{len(en_prompt)} van en el prompt de cada pregunta (máximo {bitacora_chat.MAX_LECCIONES_PROMPT}).")
+    for x in bitacora_chat.por_prioridad(lecciones):
+        marca = "📌" if x.firma in en_prompt else "·"
+        st.caption(f"{marca} {x.leccion} (×{x.veces})")
+    en_curso = bool(st.session_state.get("pregunta_en_curso"))
+    st.button("🗑️ Borrar la bitácora", key="borrar_bitacora", use_container_width=True,
+              disabled=not lecciones or en_curso, on_click=_borrar_bitacora)
 
 
 def _elegir_por_defecto(clave: str, preferido: str, modelos: list[str]) -> None:
@@ -866,6 +966,7 @@ def main() -> None:
     st.set_page_config(page_title="Instacart — chat y dashboard", page_icon="🛒", layout="wide")
     inicializar_estado()
     st.markdown(_CSS_FIJADOS, unsafe_allow_html=True)
+    estilos.aplicar()
     render_fijados()
     aviso = render_barra_vistas()
     if st.session_state["vista"] == VISTA_DASHBOARD:

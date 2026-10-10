@@ -198,7 +198,9 @@ def test_resumen_por_modelo_cuenta_cada_veredicto(parchear):
         _juez("correcta"), _juez("parcialmente correcta"), _juez("incorrecta"), _juez("correcta"),  # chico
         _juez("correcta"), _juez("correcta"), _juez("correcta"), "no es json",                        # grande
     ]))
-    corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=4, arbitro=ij.ARBITRO_JUEZ)
+    # Fase 26: sin corte, para contar los 4 veredictos de cada modelo.
+    corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=4, arbitro=ij.ARBITRO_JUEZ,
+                                    corta_al_acertar=False)
     chico, grande = corrida.resumen()["chico"], corrida.resumen()["grande"]
 
     assert (chico.n, chico.correctas, chico.parciales, chico.incorrectas, chico.sin_veredicto) == (4, 2, 1, 1, 0)
@@ -378,7 +380,8 @@ def test_config_tiene_cantidad_de_iteraciones_con_default_5(app):
 def _metricas_iteraciones(at: AppTest) -> dict[str, str]:
     """Solo las métricas del resumen de iteraciones (el panel de la
     necesidad tiene sus propias métricas de valores clave)."""
-    return {m.label: m.value for m in at.metric if m.value.endswith("% correctas")}
+    # Fase 26: en autocorrección (con corte) la métrica es «Convergió en el intento k» / «No convergió».
+    return {m.label: m.value for m in at.metric if m.value.endswith("% correctas") or "onvergió" in m.value}
 
 
 def _a_dashboard(at: AppTest, nid: str = "N3") -> AppTest:
@@ -422,7 +425,7 @@ def test_error_del_pipeline_se_muestra_en_el_intento(app):
     at.button(key="iterar_N3").click().run()
     assert not list(at.exception)
     assert any("No puedo ejecutar esa consulta" in e.value for e in at.error)
-    assert set(_metricas_iteraciones(at).values()) == {"0% correctas"}
+    assert set(_metricas_iteraciones(at).values()) == {"❌ No convergió (1 de 1 intentos)"}
 
 
 def test_resultados_se_guardan_por_necesidad(app):

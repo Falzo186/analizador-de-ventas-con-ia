@@ -141,7 +141,9 @@ def test_retroalimentacion_no_contiene_valores_de_la_referencia(bd_real, monkeyp
                             lambda *a, **k: (False, f"forzado en el test; el real: {original(*a, **k)}"))
     arbitro = ij.ARBITRO_JUEZ if escenario == "juez" else ij.ARBITRO_CHEQUEO
 
-    corrida = ij.correr_iteraciones(nid, modelos=["simulado"], n=2, modo=ij.MODO_AUTOCORRECCION, arbitro=arbitro)
+    # Sin corte (Fase 26): el test mira lo que recibe el intento 2 aunque el 1 haya acertado.
+    corrida = ij.correr_iteraciones(nid, modelos=["simulado"], n=2, modo=ij.MODO_AUTOCORRECCION, arbitro=arbitro,
+                                    corta_al_acertar=False)
     primero, segundo = corrida.iteraciones
     retro = segundo.retroalimentacion
 
@@ -237,29 +239,54 @@ def test_sanear_todo_citado_deja_el_aviso_sin_valores():
 # ---------------------------------------------------------------------------
 
 def test_chequeo_forma_pistas():
-    assert rf.chequeo_forma("N1", ["product_name", "n"], [("A", 3), ("B", 2)], 2) == [
-        "La pregunta pide 10 filas (un top 10) y tu consulta devolvió 2."]
-    # N3 no fija cuántas filas: no hay pista de cantidad.
+    # Las listas abiertas (N1, N3: «¿quiénes / cuáles...?») no fijan cuántas filas: no hay pista de cantidad.
     assert rf.chequeo_forma("N3", ["product_name", "t"], [("A", 0.9), ("B", 0.8)], 2) == []
     assert rf.chequeo_forma("N5", ["avg"], [(1.0,), (2.0,)], 2) == [
         "La pregunta pide un solo número (una fila) y tu consulta devolvió 2 filas."]
-    sin_nombre = rf.chequeo_forma("N2", ["department_id", "n"], [(4, 9), (16, 5)], 2)
+    # Fase 28: N10 responde con dos cifras en una fila.
+    assert rf.chequeo_forma("N10", ["a", "b"], [(1.0, 2.0), (3.0, 4.0)], 2) == [
+        "La pregunta pide una sola fila (con sus cifras) y tu consulta devolvió 2 filas."]
+    sin_nombre = rf.chequeo_forma("N2", ["department_id", "t"], [(4, 0.9), (16, 0.5)], 2)
     assert any("ninguna columna de texto" in p and "departamento" in p for p in sin_nombre)
-    sin_orden = rf.chequeo_forma("N2", ["department", "n"], [("a", 5), ("b", 9), ("c", 1)], 3)
+    # Fase 28: si la entidad se identifica con un número (user_id, la hora), no se pide texto.
+    assert rf.chequeo_forma("N1", ["user_id", "total", "dias"], [(7, 100, 0.2), (8, 100, 0.3)], 2) == []
+    assert rf.chequeo_forma("N8", ["order_hour_of_day", "pedidos"], [(10, 9), (11, 5)], 2) == []
+    sin_orden = rf.chequeo_forma("N2", ["department", "t"], [("a", 0.5), ("b", 0.9), ("c", 0.1)], 3)
     assert any("sin ordenar" in p for p in sin_orden)
-    assert any("1,000 o más" in p for p in rf.chequeo_forma("N1", ["p", "n"], [("a", 1)] * 1000, 1000))
+    assert any("1,000 o más" in p for p in rf.chequeo_forma("N5", ["avg"], [(1.0,)] * 1000, 1000))
 
 
 def test_coincidencia_automatica():
-    ref_n2 = [{"department": "produce", "pedidos": 100}, {"department": "dairy eggs", "pedidos": 90}]
-    assert rf.coincide_con_referencia("N2", ref_n2, [("produce", 100)])[0]
-    assert not rf.coincide_con_referencia("N2", ref_n2, [("produce", 400)])[0], "nombre bien, métrica mal"
-    assert rf.coincide_con_referencia("N2", ref_n2, [("produce",)])[0], "solo el nombre: es lo que pide la pregunta"
-    assert not rf.coincide_con_referencia("N2", ref_n2, [("dairy eggs",)])[0]
-    ref_n10 = [{"pct_lineas_recompradas": 59.0062, "lineas_recompradas": 1, "lineas_totales": 2}]
-    assert rf.coincide_con_referencia("N10", ref_n10, [(0.590062,)])[0], "fracción vs. porcentaje"
-    assert not rf.coincide_con_referencia("N10", ref_n10, [(41.0,)])[0]
+    ref_n2 = [{"department": "dairy eggs", "tasa_recompra": 0.67}, {"department": "beverages", "tasa_recompra": 0.65}]
+    assert rf.coincide_con_referencia("N2", ref_n2, [("dairy eggs", 0.67)])[0]
+    assert rf.coincide_con_referencia("N2", ref_n2, [("dairy eggs", 67.0)])[0], "fracción vs. porcentaje"
+    assert not rf.coincide_con_referencia("N2", ref_n2, [("dairy eggs", 5_631_067)])[0], "nombre bien, métrica mal"
+    assert rf.coincide_con_referencia("N2", ref_n2, [("dairy eggs",)])[0], "solo el nombre: es lo que pide la pregunta"
+    assert not rf.coincide_con_referencia("N2", ref_n2, [("beverages",)])[0]
     ref_n4 = [{"product_name": f"p{i}", "tasa_recompra": 0.0} for i in range(10)]
     assert rf.coincide_con_referencia("N4", ref_n4, [(f"p{i}", 0.0) for i in (3, 1, 7)])[0], "empates en otro orden"
     assert not rf.coincide_con_referencia("N4", ref_n4, [("x", 0.0), ("y", 0.0), ("p1", 0.0)])[0]
-    assert not rf.coincide_con_referencia("N1", [{"product_name": "a", "unidades": 1}], None)[0]
+    assert not rf.coincide_con_referencia("N2", ref_n2, None)[0]
+
+
+def test_coincidencia_automatica_formas_de_la_fase_28():
+    # N1: lista de clientes identificados por un número (user_id).
+    ref_n1 = [{"user_id": u, "total_pedidos": 100, "promedio_dias_entre_pedidos": 0.2 + k / 10}
+              for k, u in enumerate((46408, 134572, 112044, 54485, 100787))]
+    assert rf.coincide_con_referencia("N1", ref_n1, [(46408, 100, 0.23), (134572, 100, 0.29), (112044, 100, 0.42)])[0]
+    assert not rf.coincide_con_referencia("N1", ref_n1, [(1, 100, 9.0), (2, 100, 9.0), (46408, 100, 0.2)])[0]
+    # N8: la hora es el identificador (numérico) y no cuenta como cifra.
+    ref_n8 = [{"order_hour_of_day": 10, "pedidos": 288_418}, {"order_hour_of_day": 11, "pedidos": 284_728}]
+    assert rf.coincide_con_referencia("N8", ref_n8, [(10, 288_418)])[0]
+    assert rf.coincide_con_referencia("N8", ref_n8, [(10,)])[0], "solo la hora"
+    assert not rf.coincide_con_referencia("N8", ref_n8, [(11, 284_728)])[0]
+    assert not rf.coincide_con_referencia("N8", ref_n8, [(10, 5)])[0], "hora bien, conteo mal"
+    # N9: los dos nombres del par, en cualquier orden.
+    ref_n9 = [{"producto_a": "Bag of Organic Bananas", "producto_b": "Organic Hass Avocado", "pedidos_juntos": 64_761}]
+    assert rf.coincide_con_referencia("N9", ref_n9, [("Organic Hass Avocado", "Bag of Organic Bananas", 64_761)])[0]
+    assert not rf.coincide_con_referencia("N9", ref_n9, [("Bag of Organic Bananas", "Banana", 64_761)])[0]
+    # N10: las DOS cifras de respuesta.
+    ref_n10 = [{"pct_pedidos_todo_recomprado": 21.494, "pct_pedidos_todo_nuevo": 11.868, "pedidos": 3}]
+    assert rf.coincide_con_referencia("N10", ref_n10, [(21.494, 11.868)])[0]
+    assert rf.coincide_con_referencia("N10", ref_n10, [(0.21494, 0.11868)])[0], "fracciones"
+    assert not rf.coincide_con_referencia("N10", ref_n10, [(21.494, 50.0)])[0], "falta la segunda cifra"

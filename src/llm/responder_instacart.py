@@ -31,13 +31,15 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import duckdb
 
 from src.llm import client
-from src.llm.esquema_instacart import construir_descripcion_esquema
+from src.llm.bitacora_chat import Bitacora, leccion_de_error, leccion_de_revision, mapa_columnas
+from src.llm.esquema_instacart import construir_descripcion_esquema, describir_columnas
+from src.llm.revision_sql import FILAS_AL_REVISOR, revisar_sql
 from src.llm.nl2sql_instacart import generar_sql_instacart, generar_sql_reintento_instacart
 from src.llm.cifras_instacart import (
     cifras_invalidas,
@@ -96,6 +98,17 @@ class ResultadoInstacart:
     #: (estricta), tal cual las devolvió, aunque se hayan descartado.
     primera_redaccion: str | None = None
     segunda_redaccion: str | None = None
+    #: Fase 27: True si `motivo_reintento` vino de DuckDB (o del timeout de la
+    #: guarda), es decir, de ejecutar la consulta y no de la guarda de seguridad.
+    motivo_reintento_es_ejecucion: bool = False
+    #: Fase 27: revisión del SQL por el revisor (`revision_sql.RevisionSQL` como
+    #: dict) y si se reintentó por ella.
+    revision_sql: dict | None = None
+    reintento_por_revision: bool = False
+    #: Fase 27: lecciones agregadas a la bitácora del chat por esta pregunta.
+    lecciones_nuevas: list[str] = field(default_factory=list)
+    #: Fase 27: cuántas lecciones de la bitácora llevaba el prompt de sistema.
+    lecciones_en_prompt: int = 0
 
     @property
     def ok(self) -> bool:
@@ -241,6 +254,7 @@ def generar_y_ejecutar_con_reintento(
     contexto: list[TurnoPrevio] | None = None,
     temperatura: float = 0.0,
     retroalimentacion: str | None = None,
+    lecciones: str | None = None,
 ) -> None:
     """Pasos 2-4 con UN reintento como máximo. Llena `res.sql`,
     `res.columnas`, `res.filas`, `res.intentos` y `res.motivo_reintento`;
@@ -257,7 +271,7 @@ def generar_y_ejecutar_con_reintento(
     """
     res.sql = generar_sql_instacart(
         pregunta, descripcion_esquema, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
-        temperatura=temperatura, retroalimentacion=retroalimentacion,
+        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
     )
     res.intentos = 1
     try:
@@ -271,12 +285,13 @@ def generar_y_ejecutar_con_reintento(
         raise
     except duckdb.Error as exc:
         motivo = f"{type(exc).__name__}: {exc}"
+        res.motivo_reintento_es_ejecucion = True
 
     res.motivo_reintento = motivo
     res.sql_rechazado = res.sql
     res.sql = generar_sql_reintento_instacart(
         pregunta, descripcion_esquema, res.sql, motivo, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
-        temperatura=temperatura, retroalimentacion=retroalimentacion,
+        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
     )
     res.intentos = 2
     res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s)
@@ -294,6 +309,9 @@ def responder_pregunta_instacart(
     modelo: str | None = None,
     temperatura: float = 0.0,
     retroalimentacion: str | None = None,
+    bitacora: Bitacora | None = None,
+    revisar_sql: bool = False,
+    timeout_consulta_s: float = TIMEOUT_S_DEFAULT,
 ) -> ResultadoInstacart:
     """Ejecuta el flujo completo y SIEMPRE devuelve un `ResultadoInstacart`
     (nunca lanza una excepción hacia quien llama). `modelo` (Fase 9): el
@@ -309,8 +327,23 @@ def responder_pregunta_instacart(
     pregunta (SQL, resultado o error, veredicto del juez). Se agrega al
     mensaje de usuario de la llamada de SQL (y su reintento) y de la
     primera redacción. Solo lo pasa el modo «autocorrección» de
-    `src.llm.iteraciones_juez`; con None los prompts no cambian."""
+    `src.llm.iteraciones_juez`; con None los prompts no cambian.
+
+    Fase 27 (solo el chat libre los pasa; las necesidades y la entrega no):
+    - `bitacora`: sus lecciones van al prompt de sistema de SQL y, al terminar
+      la fase SQL (bien o mal), se le agregan las lecciones de esta pregunta:
+      del error real de ejecución (primer intento y/o final) y de la revisión.
+    - `revisar_sql`: si el SQL ejecutó, el revisor (`revision_sql`) evalúa la
+      SENTENCIA (no si la respuesta es correcta: no hay referencia). Si la marca
+      sospechosa y todavía no se usó el único reintento, se reintenta con su
+      motivo; si el reintento falla, se conserva el resultado original.
+
+    `timeout_consulta_s` (Fase 29): límite de la guarda de DuckDB. El chat usa
+    el default (10 s); el panel de iteraciones y la entrega pasan el de la
+    necesidad (`DefNecesidad.timeout_consulta_s`, p. ej. 25 s en N9)."""
     res = ResultadoInstacart(pregunta=pregunta)
+    lecciones = bitacora.bloque_prompt() if bitacora is not None else None
+    res.lecciones_en_prompt = len(bitacora.para_prompt()) if lecciones else 0
 
     try:
         con = abrir_conexion_solo_lectura(str(db_path))
@@ -328,26 +361,37 @@ def responder_pregunta_instacart(
 
         # 1-3. texto -> SQL -> validación -> ejecución con guardas
         #      (LIMIT forzado + timeout real + solo lectura), con un reintento
+        error_ejecucion: str | None = None  # Fase 27: error final de DuckDB o timeout de la guarda
         try:
             generar_y_ejecutar_con_reintento(
                 con, pregunta, descripcion_esquema, res,
                 timeout_llm_s=timeout_sql_llm_s, limite_filas=limite_filas, contexto=contexto,
-                modelo=modelo, temperatura=temperatura, retroalimentacion=retroalimentacion,
+                modelo=modelo, temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
+                timeout_sql_s=timeout_consulta_s,
             )
         except client.LlmTimeout as exc:
             res.error = f"El modelo tardó demasiado en generar la consulta y se canceló: {exc}"
-            return res
         except client.LlmNoDisponible as exc:
             res.error = f"No se pudo generar la consulta SQL: {exc}"
-            return res
         except SqlNoSeguro as exc:
             res.error = f"No puedo ejecutar esa consulta: {exc}"
-            return res
         except TimeoutConsulta as exc:
             res.error = f"La consulta tardó demasiado y se canceló: {exc}"
-            return res
+            error_ejecucion = str(exc)
         except Exception as exc:  # noqa: BLE001 - SQL mal formado, columna/tabla inexistente...
             res.error = f"No se pudo ejecutar la consulta contra los datos: {exc}"
+            if isinstance(exc, duckdb.Error):
+                error_ejecucion = str(exc)
+
+        # Fase 27: revisión de la sentencia y bitácora del chat
+        if res.ok and revisar_sql:
+            _revisar_y_quizas_reintentar(
+                con, res, descripcion_esquema, modelo=modelo, timeout_llm_s=timeout_sql_llm_s,
+                limite_filas=limite_filas, contexto=contexto, lecciones=lecciones, timeout_sql_s=timeout_consulta_s,
+            )
+        if bitacora is not None:
+            _aprender(con, res, bitacora, error_ejecucion)
+        if not res.ok:
             return res
     finally:
         con.close()
@@ -367,6 +411,77 @@ def responder_pregunta_instacart(
             res.error = f"Se obtuvo el resultado pero no se pudo redactar la respuesta: {exc}"
 
     return res
+
+
+# ---------------------------------------------------------------------------
+# Fase 27: revisión de la sentencia SQL y bitácora del chat libre
+# ---------------------------------------------------------------------------
+
+def _revisar_y_quizas_reintentar(
+    con: duckdb.DuckDBPyConnection, res: ResultadoInstacart, descripcion_esquema: str, *,
+    modelo: str | None, timeout_llm_s: float, limite_filas: int, contexto: list[TurnoPrevio] | None,
+    lecciones: str | None, timeout_sql_s: float = TIMEOUT_S_DEFAULT,
+) -> None:
+    """Revisa la sentencia que ejecutó. Si es sospechosa y queda el único
+    reintento, lo usa; si el reintento no ejecuta, se queda el resultado
+    original y el error del reintento se guarda para la bitácora."""
+    modelo = modelo or client.modelo_actual_instacart()
+    rev = revisar_sql(
+        res.pregunta, res.sql or "", describir_columnas(con),
+        _tabla_a_texto(res.columnas or [], (res.filas or [])[:FILAS_AL_REVISOR]),
+        modelo=modelo, timeout_s=timeout_llm_s,
+    )
+    res.revision_sql = asdict(rev)
+    if not rev.sospechoso or res.intentos >= 2:
+        return
+    motivo = f"Un revisor marcó tu SQL como sospechoso: {rev.motivo}"
+    sql_nuevo: str | None = None
+    try:
+        sql_nuevo = generar_sql_reintento_instacart(
+            res.pregunta, descripcion_esquema, res.sql or "", motivo, modelo=modelo, timeout_s=timeout_llm_s,
+            contexto=contexto, lecciones=lecciones,
+        )
+        sql_nuevo, columnas, filas = _validar_y_ejecutar(con, sql_nuevo, limite_filas, timeout_sql_s)
+    except (duckdb.Error, TimeoutConsulta) as exc:
+        res.revision_sql["reintento_error"] = str(exc)
+        res.revision_sql["reintento_sql"] = sql_nuevo
+        return
+    except Exception as exc:  # noqa: BLE001 - el modelo no respondió, la guarda lo rechazó...
+        res.revision_sql["reintento_error"] = str(exc)
+        return
+    res.sql_rechazado, res.motivo_reintento = res.sql, motivo
+    res.sql, res.columnas, res.filas = sql_nuevo, columnas, filas
+    res.intentos, res.reintento_por_revision = 2, True
+
+
+def _aprender(
+    con: duckdb.DuckDBPyConnection, res: ResultadoInstacart, bitacora: Bitacora, error_ejecucion: str | None,
+) -> None:
+    """Agrega a la bitácora las lecciones de esta pregunta: el error real del
+    primer SQL (si fue de ejecución), el error final y la revisión
+    sospechosa. Nunca tumba la respuesta: si algo falla, no se aprende."""
+    try:
+        mapa = mapa_columnas(con)
+        candidatas = []
+        if res.motivo_reintento_es_ejecucion:
+            candidatas.append(leccion_de_error(res.motivo_reintento or "", res.sql_rechazado or "", mapa, res.pregunta))
+        if error_ejecucion:
+            candidatas.append(leccion_de_error(error_ejecucion, res.sql or "", mapa, res.pregunta))
+        rev = res.revision_sql or {}
+        if rev.get("sospechoso"):
+            sql_revisado = res.sql_rechazado if res.reintento_por_revision else res.sql
+            candidatas.append(leccion_de_revision(rev.get("motivo", ""), rev.get("leccion", ""),
+                                                  sql_revisado or "", res.pregunta))
+            if rev.get("reintento_error") and rev.get("reintento_sql"):
+                candidatas.append(leccion_de_error(rev["reintento_error"], rev["reintento_sql"], mapa, res.pregunta))
+        vistas = set()
+        for leccion in candidatas:
+            if leccion is None or leccion.firma in vistas:
+                continue
+            vistas.add(leccion.firma)
+            res.lecciones_nuevas.append(bitacora.agregar(leccion).leccion)
+    except Exception:  # noqa: BLE001 - la bitácora es una ayuda, nunca un punto de falla
+        pass
 
 
 # ---------------------------------------------------------------------------

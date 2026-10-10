@@ -42,6 +42,7 @@ from src.analytics.registro import NECESIDADES
 from src.dashboard import graficas_datos as gd
 from src.dashboard import servicio
 from src.pdf import generador as pdf_generador
+from src.ui import estilos
 
 NECESIDADES_IDS = list(NECESIDADES)
 
@@ -160,14 +161,18 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
 
     necesidad_sel = area.radio("Necesidad", NECESIDADES_IDS, key="necesidad_sel", horizontal=horizontal)
 
-    area.divider()
-    forzar = area.checkbox(
+    # Fase 27 (UX): las herramientas (caché y PDF) no son contenido de la
+    # necesidad: van en un bloque colapsable, abierto solo si hay un resultado
+    # que mostrar. Dentro no hay expanders ni st.status (no se pueden anidar).
+    hay_resultado = st.session_state["ultimo_refresco"] is not None or st.session_state["ultimo_pdf"] is not None
+    herr = area.expander("🛠️ Datos y reporte PDF", expanded=hay_resultado)
+    forzar = herr.checkbox(
         "Forzar recálculo completo (ignora la caché en disco)",
         value=False,
         help="Sin marcar, solo recalcula lo que falte o esté rancio (huella_bd distinta a la BD fuente actual).",
     )
-    if area.button("🔄 Actualizar datos", use_container_width=True):
-        barra = area.progress(0.0, text="Actualizando…")
+    if herr.button("🔄 Actualizar datos", use_container_width=True):
+        barra = herr.progress(0.0, text="Actualizando…")
         contador = {"i": 0}
 
         def _avance(estado: servicio.EstadoNecesidad) -> None:
@@ -184,16 +189,15 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
 
     ultimo = st.session_state["ultimo_refresco"]
     if ultimo is not None:
-        area.success(
+        herr.success(
             f"Último refresco: {ultimo.n_recalculadas}/{len(ultimo.estados)} recalculadas en "
             f"{ultimo.duracion_total_s:.2f}s ({ultimo.n_errores} errores)."
         )
-        with area.expander("Detalle del último refresco"):
-            for e in ultimo.estados:
-                marca = "🔁 recalculada" if e.recalculada else "✅ ya vigente"
-                if e.error:
-                    marca = "❌ error"
-                st.write(f"**{e.id}** — {marca} ({e.duracion_s:.2f}s)" + (f" — {e.error}" if e.error else ""))
+        for e in ultimo.estados:
+            marca = "🔁 recalculada" if e.recalculada else "✅ ya vigente"
+            if e.error:
+                marca = "❌ error"
+            herr.caption(f"**{e.id}** — {marca} ({e.duracion_s:.2f}s)" + (f" — {e.error}" if e.error else ""))
 
 
     # ---------------------------------------------------------------------------
@@ -203,34 +207,30 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
     # cada una (Fase 4, decisión ya tomada: no reabrir).
     # ---------------------------------------------------------------------------
 
-    area.divider()
-    area.subheader("📄 Reporte PDF")
+    herr.divider()
+    herr.markdown("**📄 Reporte PDF**")
 
     ruta_pdf = pdf_generador.OUT_PDF_DEFAULT
     pdf_existe = ruta_pdf.exists()
     pdf_vigente = _pdf_vigente_cacheado(st.session_state["version_cache"]) if pdf_existe else False
 
     if not pdf_existe:
-        area.caption("Aún no se generó ningún PDF.")
+        herr.caption("Aún no se generó ningún PDF.")
     elif pdf_vigente:
-        area.caption("✅ El PDF ya está actualizado: ninguna necesidad cambió desde que se generó.")
+        herr.caption("✅ El PDF ya está actualizado: ninguna necesidad cambió desde que se generó.")
     else:
-        area.caption("⚠️ El PDF existe, pero al menos una necesidad cambió desde que se generó (huella_bd distinta).")
+        herr.caption("⚠️ El PDF existe, pero al menos una necesidad cambió desde que se generó (huella_bd distinta).")
 
-    forzar_pdf = area.checkbox(
+    forzar_pdf = herr.checkbox(
         f"Recalcular las {len(NECESIDADES_IDS)} necesidades antes de generar el PDF",
         value=False, key="forzar_pdf",
         help="Sin marcar, el PDF usa la caché de cada necesidad tal cual esté (igual que un panel); "
              "solo recalcula lo que falte o esté rancio.",
     )
 
-    if area.button("📄 Generar/Actualizar PDF", use_container_width=True):
-        with area.status("Generando PDF…", expanded=False) as status:
+    if herr.button("📄 Generar/Actualizar PDF", use_container_width=True):
+        with st.spinner("Generando PDF…"):
             resumen_pdf = pdf_generador.generar_pdf(out_pdf=ruta_pdf, forzar=forzar_pdf)
-            status.update(
-                label=f"PDF listo: {resumen_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {resumen_pdf.duracion_s:.1f}s",
-                state="complete",
-            )
         st.session_state["ultimo_pdf"] = resumen_pdf
         st.session_state["version_cache"] += 1  # invalida _pdf_vigente_cacheado y _cargar_cacheado
         _cargar_cacheado.clear()
@@ -239,18 +239,17 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
 
     ultimo_pdf = st.session_state["ultimo_pdf"]
     if ultimo_pdf is not None:
-        area.success(
+        herr.success(
             f"Generado: {ultimo_pdf.tamano_bytes / pdf_generador.BYTES_POR_KB:,.0f} KB en {ultimo_pdf.duracion_s:.1f}s."
         )
         if ultimo_pdf.discrepancias_parametros:
-            with area.expander(f"⚠️ {len(ultimo_pdf.discrepancias_parametros)} discrepancias JSON vs. NECESIDADES.md"):
-                for d in ultimo_pdf.discrepancias_parametros:
-                    st.write(f"- {d}")
+            herr.warning(f"{len(ultimo_pdf.discrepancias_parametros)} discrepancias JSON vs. NECESIDADES.md:\n\n"
+                         + "\n".join(f"- {d}" for d in ultimo_pdf.discrepancias_parametros), icon="⚠️")
 
     if pdf_existe:
         with open(ruta_pdf, "rb") as _fh:
             _datos_pdf = _fh.read()
-        area.download_button(
+        herr.download_button(
             "⬇️ Descargar PDF", data=_datos_pdf, file_name=ruta_pdf.name,
             mime="application/pdf", use_container_width=True,
         )
@@ -279,76 +278,89 @@ def render_descarga_json(necesidad_sel: str) -> None:
 
 
 def render_panel(necesidad_sel: str) -> None:
-    """Panel de la necesidad elegida: título, gráficas, valores clave,
-    hallazgos, limitaciones y tablas."""
+    """Panel de la necesidad elegida.
+
+    Fase 27 (UX): un bloque con borde por cada parte, en este orden y con la
+    misma jerarquía en las 10 necesidades:
+    `st.header` (necesidad) > tarjeta «Pregunta y decisión» > tarjeta
+    «✅ Respuesta» (valores clave + redacción) > tarjeta «📈 Gráfica» >
+    tarjeta «⚠️ Limitaciones» (siempre visibles) > tarjeta «🔎 Detalle
+    técnico» con lo colapsable (SQL, resultado crudo, parámetros), rotulada
+    como tal para que no se lea como contenido."""
     carga = cargar(necesidad_sel)
     r = carga.resultado
 
-    st.title(f"{r.id} — {r.titulo}")
+    st.header(f"{r.id} — {r.titulo}")
     insignia = "🗄️ Desde caché en disco" if carga.desde_cache else "⚡ Recién calculado (no había caché vigente)"
     st.caption(
         f"{insignia} · generado el `{r.fecha_generacion}` (tardó {r.duracion_s:.2f}s en calcularse) · "
         f"esta carga tomó {carga.duracion_carga_s * 1000:.0f}ms."
     )
 
-    if necesidad_sel in servicio.NECESIDADES_ENTREGA:
-        render_descarga_json(necesidad_sel)
-
-    col_p, col_d = st.columns(2)
-    with col_p:
-        st.markdown(f"**Pregunta:** {r.pregunta}")
-    with col_d:
-        st.markdown(f"**Decisión:** {r.decision}")
+    with st.container(border=True):
+        col_p, col_d = st.columns(2)
+        with col_p:
+            st.markdown("**❓ Pregunta**")
+            st.markdown(r.pregunta)
+        with col_d:
+            st.markdown("**🎯 Decisión que apoya**")
+            st.markdown(r.decision)
+        st.caption(f"Universo: {r.universo.texto}"
+                   + (f" · Filtros: {'; '.join(r.universo.filtros)}" if r.universo.filtros else ""))
+        if necesidad_sel in servicio.NECESIDADES_ENTREGA:
+            render_descarga_json(necesidad_sel)
 
     with st.container(border=True):
-        st.markdown(f"**Universo:** {r.universo.texto}")
-        if r.universo.filtros:
-            st.caption("Filtros: " + "; ".join(r.universo.filtros))
-
-    st.subheader("Respuesta")
-    for h in r.hallazgos:
-        st.markdown(f"- {h}")
+        st.subheader("✅ Respuesta")
+        # Las listas (p. ej. el top 10 de nombres) ya están en la redacción: una métrica no las muestra bien.
+        escalares = [vc for vc in r.valores_clave if not isinstance(vc.valor, list)]
+        if escalares:
+            n_cols = min(4, len(escalares))
+            cols = st.columns(n_cols)
+            for i, vc in enumerate(escalares):
+                with cols[i % n_cols]:
+                    st.metric(vc.etiqueta, _fmt_valor(vc.valor, vc.unidad))
+        for h in r.hallazgos:
+            st.markdown(f"- {h}")
 
     graficas = graficos(r)
     if graficas:
-        st.subheader("Gráfica")
-    for titulo_grafico, chart in graficas:
-        st.markdown(f"*{titulo_grafico}*")
-        if chart is None:
-            st.info("No hay datos suficientes para esta gráfica con el universo/parámetros actuales.")
-        else:
-            st.altair_chart(chart, use_container_width=True)
+        with st.container(border=True):
+            st.subheader("📈 Gráfica")
+            for titulo_grafico, chart in graficas:
+                st.caption(titulo_grafico)
+                if chart is None:
+                    st.info("No hay datos suficientes para esta gráfica con el universo/parámetros actuales.")
+                else:
+                    st.altair_chart(chart, use_container_width=True)
 
-    st.subheader("Valores clave")
-    # Las listas (p. ej. el top 10 de nombres) ya están en «Respuesta»: una métrica no las muestra bien.
-    escalares = [vc for vc in r.valores_clave if not isinstance(vc.valor, list)]
-    n_cols = min(4, len(escalares)) or 1
-    cols = st.columns(n_cols)
-    for i, vc in enumerate(escalares):
-        with cols[i % n_cols]:
-            st.metric(vc.etiqueta, _fmt_valor(vc.valor, vc.unidad))
+    with st.container(border=True):
+        st.subheader("⚠️ Limitaciones")
+        st.caption("Siempre visibles, nunca en un bloque colapsado.")
+        for lim in r.limitaciones:
+            st.warning(lim, icon="⚠️")
 
-    st.subheader("Consulta SQL de referencia")
-    for consulta in r.consultas:
-        st.code(consulta.sql, language="sql")
-
-    st.subheader("⚠️ Limitaciones")
-    st.caption("Siempre visibles, nunca en un expander colapsado por defecto.")
-    for lim in r.limitaciones:
-        st.warning(lim, icon="⚠️")
-
-    with st.expander("Parámetros usados en esta necesidad"):
-        for p in r.parametros:
-            st.markdown(f"**{p.nombre}** = `{p.valor}`  \n{p.justificacion}")
-
-    with st.expander("Resultado crudo de la consulta (la misma tabla que alimenta la gráfica)"):
-        for nombre_tabla, filas in r.tablas.items():
-            st.caption(f"`{nombre_tabla}` — {r.tablas_criterio_corte.get(nombre_tabla, '')}")
-            st.dataframe(_df(filas)[columnas_ordenadas(r.id, filas)] if filas else _df(filas), use_container_width=True, height=min(320, 45 + 30 * len(filas)))
+    with st.container(border=True):
+        st.subheader("🔎 Detalle técnico")
+        st.caption("Colapsado: ábrelo para ver cómo se calculó la respuesta.")
+        with st.expander("🧾 Consulta SQL de referencia"):
+            for consulta in r.consultas:
+                st.code(consulta.sql, language="sql")
+        with st.expander("📋 Resultado crudo de la consulta (la misma tabla que alimenta la gráfica)"):
+            for nombre_tabla, filas in r.tablas.items():
+                st.caption(f"`{nombre_tabla}` — {r.tablas_criterio_corte.get(nombre_tabla, '')}")
+                st.dataframe(_df(filas)[columnas_ordenadas(r.id, filas)] if filas else _df(filas),
+                             use_container_width=True, height=min(320, 45 + 30 * len(filas)))
+        with st.expander("⚙️ Parámetros usados en esta necesidad"):
+            if not r.parametros:
+                st.caption("Esta necesidad no tiene parámetros.")
+            for prm in r.parametros:
+                st.markdown(f"**{prm.nombre}** = `{prm.valor}`  \n{prm.justificacion}")
 
 
 def main() -> None:
     st.set_page_config(page_title="Dashboard Instacart — Fase 3", page_icon="📊", layout="wide")
+    estilos.aplicar()
     inicializar_estado()
     render_panel(render_controles(st.sidebar))
 

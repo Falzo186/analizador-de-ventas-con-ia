@@ -3,7 +3,7 @@ veredicto en autocorrección; el juez-LLM solo diagnostica los intentos que ya
 fallaron, y su opinión se registra aparte (`src.llm.iteraciones_juez`). Mismo
 modelo simulado y fixture chica que la Fase 11 (sin Ollama).
 
-En la fixture, N1 tiene referencia (6 productos): su SQL de referencia acierta y
+En la fixture, N5 tiene referencia (Fase 28: la N1 nueva queda vacía en la fixture): su SQL de referencia acierta y
 `SQL_OK` ("SELECT COUNT(*) AS n FROM orders") falla.
 """
 
@@ -26,7 +26,7 @@ from tests.test_fase11_iteraciones import (  # noqa: F401 - fixtures
     rutas,
 )
 
-SQL_N1 = nec.DEFINICIONES["N1"].sql()
+SQL_N5 = nec.DEFINICIONES["N5"].sql()
 
 
 def _diag(diagnostico: str, comparacion: str = "difiere") -> str:
@@ -39,8 +39,8 @@ def test_por_defecto_autocorreccion_usa_el_chequeo_e_independiente_el_juez():
 
 
 def test_intento_correcto_lo_decide_el_chequeo_aunque_el_juez_diga_que_no(parchear):
-    modelo = parchear(ModeloIteraciones(sql=[SQL_N1], juez=[_juez("incorrecta", "no me convence")]))
-    it = ij.correr_iteraciones("N1", modelos=["chico"], n=1).iteraciones[0]
+    modelo = parchear(ModeloIteraciones(sql=[SQL_N5], juez=[_juez("incorrecta", "no me convence")]))
+    it = ij.correr_iteraciones("N5", modelos=["chico"], n=1).iteraciones[0]
 
     assert it.arbitro == ij.ARBITRO_CHEQUEO and it.coincide_referencia
     assert (it.veredicto, it.origen_veredicto) == (ij.CORRECTA, ij.ORIGEN_CHEQUEO)
@@ -55,7 +55,7 @@ def test_intento_fallido_lo_decide_el_chequeo_y_el_juez_solo_diagnostica(parchea
     modelo = parchear(ModeloIteraciones(
         juez=[_juez("correcta", "todo bien")], diagnostico=[_diag("Cuentas pedidos en vez de líneas por producto.")],
     ))
-    it = ij.correr_iteraciones("N1", modelos=["chico"], n=1).iteraciones[0]
+    it = ij.correr_iteraciones("N5", modelos=["chico"], n=1).iteraciones[0]
 
     assert not it.coincide_referencia
     assert (it.veredicto, it.origen_veredicto) == (ij.INCORRECTA, ij.ORIGEN_CHEQUEO), "el «correcta» del juez no cuenta"
@@ -76,8 +76,8 @@ def test_prompt_de_diagnostico_no_pide_veredicto():
 
 
 def test_sin_medir_juez_no_se_llama_al_juez_salvo_para_diagnosticar(parchear):
-    modelo = parchear(ModeloIteraciones(sql=[SQL_N1, SQL_OK]))
-    corrida = ij.correr_iteraciones("N1", modelos=["chico"], n=2, medir_juez=False)
+    modelo = parchear(ModeloIteraciones(sql=[SQL_N5, SQL_OK]))
+    corrida = ij.correr_iteraciones("N5", modelos=["chico"], n=2, medir_juez=False, corta_al_acertar=False)
     acierto, fallo = corrida.iteraciones
     assert acierto.veredicto == ij.CORRECTA and fallo.veredicto == ij.INCORRECTA
     assert not modelo.de_tipo("juez") and acierto.juez_veredicto is None
@@ -86,14 +86,14 @@ def test_sin_medir_juez_no_se_llama_al_juez_salvo_para_diagnosticar(parchear):
 
 def test_pipeline_fallido_no_llama_a_ningun_juez(parchear):
     modelo = parchear(ModeloIteraciones(sql=["DELETE FROM orders"]))
-    it = ij.correr_iteraciones("N1", modelos=["chico"], n=1).iteraciones[0]
+    it = ij.correr_iteraciones("N5", modelos=["chico"], n=1).iteraciones[0]
     assert not it.ok and it.veredicto == ij.INCORRECTA and it.origen_veredicto == ij.ORIGEN_AUTOMATICO
     assert not modelo.de_tipo("juez") and not modelo.de_tipo("diagnostico")
 
 
 def test_retroalimentacion_con_el_chequeo_como_arbitro(parchear):
-    parchear(ModeloIteraciones(sql=[SQL_OK, SQL_N1, SQL_OK], diagnostico=[_diag("Falta unir con products.")]))
-    corrida = ij.correr_iteraciones("N1", modelos=["chico"], n=3)
+    parchear(ModeloIteraciones(sql=[SQL_OK, SQL_N5, SQL_OK], diagnostico=[_diag("Falta unir con products.")]))
+    corrida = ij.correr_iteraciones("N5", modelos=["chico"], n=3, corta_al_acertar=False)
     fallo, acierto, despues = corrida.iteraciones
 
     assert acierto.retroalimentacion == ij.texto_retroalimentacion(fallo)
@@ -110,10 +110,11 @@ def test_retroalimentacion_con_el_chequeo_como_arbitro(parchear):
 def test_resumen_mide_cuanto_se_equivoca_el_juez(parchear):
     # 4 intentos: acierto/juez sí, acierto/juez no (falso negativo), fallo/juez sí (falso positivo), fallo/juez no.
     parchear(ModeloIteraciones(
-        sql=[SQL_N1, SQL_N1, SQL_OK, SQL_OK],
+        sql=[SQL_N5, SQL_N5, SQL_OK, SQL_OK],
         juez=[_juez("correcta"), _juez("parcialmente correcta"), _juez("correcta"), _juez("incorrecta")],
     ))
-    corrida = ij.correr_iteraciones("N1", modelos=["chico"], n=4, modo=ij.MODO_AUTOCORRECCION)
+    corrida = ij.correr_iteraciones("N5", modelos=["chico"], n=4, modo=ij.MODO_AUTOCORRECCION,
+                                    corta_al_acertar=False)
     r = corrida.resumen()["chico"]
     assert [it.veredicto for it in corrida.iteraciones] == [ij.CORRECTA, ij.CORRECTA, ij.INCORRECTA, ij.INCORRECTA]
     assert (r.correctas, r.incorrectas, r.primer_correcto) == (2, 2, 1)
@@ -128,8 +129,8 @@ def test_resumen_mide_cuanto_se_equivoca_el_juez(parchear):
 
 
 def test_modo_independiente_no_cambia_el_juez_decide(parchear):
-    modelo = parchear(ModeloIteraciones(sql=[SQL_N1], juez=[_juez("parcialmente correcta", "le falta algo")]))
-    corrida = ij.correr_iteraciones("N1", modelos=["chico"], n=2, modo=ij.MODO_INDEPENDIENTE)
+    modelo = parchear(ModeloIteraciones(sql=[SQL_N5], juez=[_juez("parcialmente correcta", "le falta algo")]))
+    corrida = ij.correr_iteraciones("N5", modelos=["chico"], n=2, modo=ij.MODO_INDEPENDIENTE)
     assert corrida.arbitro == ij.ARBITRO_JUEZ
     for it in corrida.iteraciones:
         assert (it.veredicto, it.origen_veredicto) == (ij.PARCIAL, ij.ORIGEN_JUEZ)
@@ -138,8 +139,8 @@ def test_modo_independiente_no_cambia_el_juez_decide(parchear):
 
 
 def test_arbitro_juez_en_autocorreccion_reproduce_la_fase_24(parchear):
-    parchear(ModeloIteraciones(sql=[SQL_N1], juez=[_juez("incorrecta", "no", "Ordena distinto.")]))
-    corrida = ij.correr_iteraciones("N1", modelos=["chico"], n=2, arbitro=ij.ARBITRO_JUEZ)
+    parchear(ModeloIteraciones(sql=[SQL_N5], juez=[_juez("incorrecta", "no", "Ordena distinto.")]))
+    corrida = ij.correr_iteraciones("N5", modelos=["chico"], n=2, arbitro=ij.ARBITRO_JUEZ)
     primero, segundo = corrida.iteraciones
     assert primero.coincide_referencia and primero.veredicto == ij.INCORRECTA, "con árbitro juez, decide el juez"
     assert "Veredicto del evaluador: INCORRECTA." in segundo.retroalimentacion
@@ -159,14 +160,14 @@ def test_parsear_diagnostico(crudo, diagnostico, origen):
 
 def test_arbitro_desconocido_se_rechaza():
     with pytest.raises(ValueError):
-        ij.nueva_corrida("N1", modelos=["chico"], n=1, arbitro="otro")
+        ij.nueva_corrida("N5", modelos=["chico"], n=1, arbitro="otro")
 
 
 def test_cli_acepta_arbitro_y_sin_medir_juez(parchear, tmp_path):
-    modelo = parchear(ModeloIteraciones(sql=[SQL_N1]))
-    assert ij.main(["N1", "--iteraciones", "1", "--pequeno", "chico", "--grande", "-", "--arbitro", "chequeo",
+    modelo = parchear(ModeloIteraciones(sql=[SQL_N5]))
+    assert ij.main(["N5", "--iteraciones", "1", "--pequeno", "chico", "--grande", "-", "--arbitro", "chequeo",
                     "--sin-medir-juez", "--out", str(tmp_path)]) == 0
-    doc = json.loads((tmp_path / "N1_iteraciones_juez.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "N5_iteraciones_juez.json").read_text(encoding="utf-8"))
     assert doc["arbitro"] == "chequeo" and doc["medir_juez"] is False
     assert doc["iteraciones"][0]["veredicto"] == ij.CORRECTA and not modelo.de_tipo("juez")
 
@@ -174,12 +175,12 @@ def test_cli_acepta_arbitro_y_sin_medir_juez(parchear, tmp_path):
 def test_panel_muestra_el_veredicto_del_chequeo_y_la_opinion_del_juez_aparte(app):
     from src.ui import app_instacart
 
-    modelo = ModeloIteraciones(sql=[SQL_N1, SQL_OK], juez=[_juez("incorrecta", "no me convence")],
+    modelo = ModeloIteraciones(sql=[SQL_OK, SQL_N5], juez=[_juez("incorrecta", "no me convence")],
                                diagnostico=[_diag("Falta unir con products.")])
     at = app(modelo)
     at.number_input(key=app_instacart.CLAVE_ITERACIONES).set_value(2).run()
-    at = _a_dashboard(at, "N1")
-    at.button(key="iterar_N1").click().run()
+    at = _a_dashboard(at, "N5")
+    at.button(key="iterar_N5").click().run()
     assert not list(at.exception), list(at.exception)
 
     textos = "\n".join(m.value for m in at.markdown)

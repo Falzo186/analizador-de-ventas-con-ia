@@ -62,6 +62,15 @@ Fase 24 (10 necesidades de una sola consulta; retroalimentación sin fuga):
 - `coincide_referencia`: comparación determinista resultado-vs-referencia,
   solo informativa (contrasta al juez-LLM); no se pasa al modelo.
 
+Fase 26 (corte al primer acierto): en autocorrección, la cadena de cada
+modelo termina en el primer intento con veredicto "correcta"
+(`corta_al_acertar`); los intentos que faltan quedan "no ejecutados (ya
+convergió)" (`CorridaIteraciones.convergencia`, `no_ejecutadas`), no fallidos.
+Seguir iterando a temperatura 0.5 solo arriesgaba perder el acierto (Fase 25:
+~13 % de los aciertos de llama se perdían en el intento siguiente). No aplica
+al modo independiente, que mide la variabilidad de N muestras. `--sin-corte`
+reproduce la Fase 25.
+
 Fase 25 (el chequeo automático es el árbitro, no el juez-LLM):
 - En modo autocorrección (`arbitro_por_defecto`), el veredicto de cada
   intento es el del chequeo automático contra la referencia: coincide ->
@@ -145,6 +154,13 @@ def arbitro_por_defecto(modo: str) -> str:
 
 #: Pregunta fija de cada necesidad, tal cual la `pregunta` de su definición.
 PREGUNTAS: dict[str, str] = {nid: d.pregunta for nid, d in DEFINICIONES.items()}
+
+
+def timeout_consulta(necesidad: str) -> float:
+    """Fase 29: límite (s) de la guarda de DuckDB para el SQL que el modelo
+    genera para `necesidad`: el de su definición o, si no fija uno, el del chat."""
+    propio = DEFINICIONES[necesidad].timeout_consulta_s
+    return propio if propio is not None else ri.TIMEOUT_S_DEFAULT
 
 #: Filas del resultado de referencia que ve el juez (contexto de 4,096 tokens).
 FILAS_REFERENCIA_JUEZ = 10
@@ -443,9 +459,16 @@ class ResumenModelo:
     juez_acuerdos: int = 0
     juez_falsos_negativos: int = 0
     juez_falsos_positivos: int = 0
+    #: Fase 26 (corte al primer acierto): intentos que no se ejecutaron porque
+    #: el modelo ya había convergido, y el veredicto del ÚLTIMO intento
+    #: ejecutado (el estado en que termina la cadena; None si no hay intentos).
+    no_ejecutadas: int = 0
+    estado_final: str | None = None
 
     @property
     def pct_correctas(self) -> float:
+        """Sobre los intentos EJECUTADOS. Con corte al primer acierto hay a lo
+        sumo uno correcto por modelo: ahí lo que importa es `estado_final`."""
         return 100.0 * self.correctas / self.n if self.n else 0.0
 
 
@@ -472,6 +495,11 @@ class CorridaIteraciones:
     #: Fase 25: quién decide el veredicto (`ARBITROS`) y si se mide al juez-LLM.
     arbitro: str = ARBITRO_JUEZ
     medir_juez: bool = True
+    #: Fase 26: en autocorrección, la cadena de cada modelo se corta en el
+    #: primer intento con veredicto "correcta"; `convergencia[modelo]` es ese
+    #: intento y los siguientes quedan "no ejecutados (ya convergió)".
+    corta_al_acertar: bool = False
+    convergencia: dict[str, int] = field(default_factory=dict)
 
     @property
     def valores_protegidos(self) -> rf.ValoresProtegidos:
@@ -481,9 +509,23 @@ class CorridaIteraciones:
     def total_esperado(self) -> int:
         return self.n_iteraciones * len(self.modelos)
 
+    def no_ejecutadas(self, modelo: str) -> list[int]:
+        """Fase 26: intentos de `modelo` que no se corrieron porque ya había
+        convergido (vacío si no convergió o si no hay corte)."""
+        k = self.convergencia.get(modelo)
+        return [] if k is None else list(range(k + 1, self.n_iteraciones + 1))
+
+    @property
+    def total_no_ejecutadas(self) -> int:
+        return sum(len(self.no_ejecutadas(m)) for m in self.modelos)
+
     @property
     def completa(self) -> bool:
-        return self.estado == ESTADO_COMPLETA and len(self.iteraciones) == self.total_esperado
+        """Terminaron todos los intentos esperados: ejecutados o, con corte,
+        no ejecutados porque el modelo ya convergió. Una corrida interrumpida
+        (Fase 23) se queda "en curso"."""
+        return (self.estado == ESTADO_COMPLETA
+                and len(self.iteraciones) + self.total_no_ejecutadas == self.total_esperado)
 
     def de_modelo(self, modelo: str) -> list[Iteracion]:
         return [it for it in self.iteraciones if it.modelo == modelo]
@@ -509,6 +551,8 @@ class CorridaIteraciones:
                                           if it.coincide_referencia and it.juez_veredicto != CORRECTA),
                 juez_falsos_positivos=sum(1 for it in opinados
                                           if not it.coincide_referencia and it.juez_veredicto == CORRECTA),
+                no_ejecutadas=len(self.no_ejecutadas(modelo)),
+                estado_final=its[-1].veredicto if its else None,
             )
         return out
 
@@ -522,6 +566,8 @@ class CorridaIteraciones:
             "modo": self.modo,
             "arbitro": self.arbitro,
             "medir_juez": self.medir_juez,
+            "corta_al_acertar": self.corta_al_acertar,
+            "convergencia": self.convergencia,
             "modelos": self.modelos,
             "n_iteraciones": self.n_iteraciones,
             "estado": self.estado,
@@ -532,7 +578,16 @@ class CorridaIteraciones:
             "timestamp": self.timestamp,
             "resumen": {m: {**asdict(r), "pct_correctas": r.pct_correctas} for m, r in self.resumen().items()},
             "iteraciones": [{"etiqueta": it.etiqueta, **asdict(it)} for it in self.iteraciones],
+            "no_ejecutadas": [
+                {"modelo": m, "numero": k, "etiqueta": f"Intento {k} de {self.n_iteraciones} · {m}",
+                 "estado": texto_no_ejecutada(self.convergencia[m])}
+                for m in self.modelos for k in self.no_ejecutadas(m)
+            ],
         }
+
+
+def texto_no_ejecutada(convergio_en: int) -> str:
+    return f"no ejecutada (ya convergió en el intento {convergio_en})"
 
 
 def _tabla_texto(columnas: list[str] | None, filas: list[list] | None, n_filas: int | None, maximo: int) -> str:
@@ -654,6 +709,7 @@ def correr_iteracion(
         timeout_respuesta_llm_s=timeout_respuesta_llm_s,
         temperatura=TEMPERATURA_ITERACIONES,
         retroalimentacion=retroalimentacion,
+        timeout_consulta_s=timeout_consulta(necesidad),
     )
     t1 = time.perf_counter()
     referencia_filas = referencia_filas or []
@@ -715,14 +771,21 @@ def correr_iteracion(
 
 def nueva_corrida(
     necesidad: str, *, modelos: Sequence[str], n: int = ITERACIONES_DEFAULT, modo: str = MODO_DEFAULT,
-    arbitro: str | None = None, medir_juez: bool = True,
+    arbitro: str | None = None, medir_juez: bool = True, corta_al_acertar: bool | None = None,
 ) -> CorridaIteraciones:
     """Corrida vacía ("en curso"), con la referencia ya cargada. Quien la
     corre (`correr_iteraciones(corrida=...)`) le agrega cada intento apenas
     termina, así que guardarla ANTES de empezar (la UI la pone en
     `st.session_state`) conserva todo lo terminado si se interrumpe.
-    `arbitro` None -> `arbitro_por_defecto(modo)` (Fase 25)."""
+    `arbitro` None -> `arbitro_por_defecto(modo)` (Fase 25).
+    `corta_al_acertar` None -> sí en autocorrección (Fase 26). En modo
+    independiente no se permite: ese modo mide la variabilidad de N muestras
+    independientes, y cortar en el primer acierto la arruinaría (y ahí un
+    intento extra no puede "perder" un acierto anterior)."""
     arbitro = arbitro if arbitro is not None else arbitro_por_defecto(modo)
+    corta_al_acertar = (modo == MODO_AUTOCORRECCION) if corta_al_acertar is None else corta_al_acertar
+    if corta_al_acertar and modo != MODO_AUTOCORRECCION:
+        raise ValueError("el corte al primer acierto solo aplica al modo autocorrección")
     if arbitro not in ARBITROS:
         raise ValueError(f"arbitro debe ser uno de {ARBITROS}, no {arbitro!r}")
     if necesidad not in PREGUNTAS:
@@ -739,7 +802,7 @@ def nueva_corrida(
         timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
         referencia_sql="\n".join(c.sql for c in r.consultas),
         referencia_filas=[{k: _valor_json(v) for k, v in f.items()} for f in _filas_referencia(r)],
-        arbitro=arbitro, medir_juez=medir_juez,
+        arbitro=arbitro, medir_juez=medir_juez, corta_al_acertar=corta_al_acertar,
     )
 
 
@@ -758,6 +821,7 @@ def correr_iteraciones(
     corrida: CorridaIteraciones | None = None,
     arbitro: str | None = None,
     medir_juez: bool = True,
+    corta_al_acertar: bool | None = None,
 ) -> CorridaIteraciones:
     """N iteraciones por modelo, modelo por modelo (todas las del pequeño y
     luego todas las del grande): así Ollama carga cada modelo una sola vez
@@ -771,14 +835,15 @@ def correr_iteraciones(
     `corrida`: la de `nueva_corrida` si quien llama necesita tenerla antes
     de que termine; si no, se crea aquí."""
     if corrida is None:
-        corrida = nueva_corrida(necesidad, modelos=modelos, n=n, modo=modo, arbitro=arbitro, medir_juez=medir_juez)
+        corrida = nueva_corrida(necesidad, modelos=modelos, n=n, modo=modo, arbitro=arbitro, medir_juez=medir_juez,
+                                corta_al_acertar=corta_al_acertar)
     total = corrida.total_esperado
     vp = corrida.valores_protegidos
     for modelo in corrida.modelos:
         anterior: Iteracion | None = None
         for i in range(1, corrida.n_iteraciones + 1):
             if al_iniciar is not None:
-                al_iniciar(modelo, i, len(corrida.iteraciones), total)
+                al_iniciar(modelo, i, len(corrida.iteraciones) + corrida.total_no_ejecutadas, total)
             retro = (texto_retroalimentacion(anterior, vp)
                      if corrida.modo == MODO_AUTOCORRECCION and anterior is not None else None)
             it = correr_iteracion(
@@ -790,8 +855,14 @@ def correr_iteraciones(
             )
             corrida.iteraciones.append(it)
             anterior = it
+            # Fase 26: el primer acierto termina la cadena de este modelo; los
+            # intentos que faltan quedan "no ejecutados (ya convergió)".
+            if corrida.corta_al_acertar and it.veredicto == CORRECTA:
+                corrida.convergencia[modelo] = i
             if al_avanzar is not None:
-                al_avanzar(it, len(corrida.iteraciones), total)
+                al_avanzar(it, len(corrida.iteraciones) + corrida.total_no_ejecutadas, total)
+            if modelo in corrida.convergencia:
+                break
     corrida.estado = ESTADO_COMPLETA
     return corrida
 
@@ -833,6 +904,10 @@ _DESCRIPCION_ARBITRO = {
 
 def _resumen_texto(r: ResumenModelo) -> str:
     conv = f"primer «correcta» en el intento {r.primer_correcto}" if r.primer_correcto else "ningún «correcta»"
+    if r.no_ejecutadas:
+        conv += f" (convergió: {r.no_ejecutadas} intento(s) no ejecutado(s))"
+    if r.estado_final is not None:
+        conv += f" · termina en «{r.estado_final}»"
     coin = (f"primera coincidencia en el intento {r.primera_coincidencia}" if r.primera_coincidencia
             else "ninguna coincidencia")
     texto = (f"{r.modelo}: {r.correctas}/{r.n} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
@@ -857,8 +932,11 @@ def a_texto(corrida: CorridaIteraciones) -> str:
         f"Modo: {_DESCRIPCION_MODO.get(corrida.modo, corrida.modo)}",
         f"Árbitro del veredicto: {_DESCRIPCION_ARBITRO.get(corrida.arbitro, corrida.arbitro)}",
         f"Modelos: {', '.join(corrida.modelos)} · {corrida.n_iteraciones} intentos por modelo · "
-        f"temperatura {corrida.temperatura} (juez {corrida.temperatura_juez})",
-        f"Estado: {corrida.estado} · {len(corrida.iteraciones)} de {corrida.total_esperado} intentos registrados",
+        f"temperatura {corrida.temperatura} (juez {corrida.temperatura_juez}) · "
+        f"límite de la consulta en DuckDB {timeout_consulta(corrida.necesidad):.0f} s",
+        f"Estado: {corrida.estado} · {len(corrida.iteraciones)} de {corrida.total_esperado} intentos ejecutados"
+        + (f", {corrida.total_no_ejecutadas} no ejecutados porque ya había convergido" if corrida.total_no_ejecutadas else "")
+        + (" · corte al primer acierto: sí" if corrida.corta_al_acertar else ""),
         "",
         "RESPUESTA DE REFERENCIA (correcta, del software determinista):",
         corrida.referencia,
@@ -908,6 +986,11 @@ def a_texto(corrida: CorridaIteraciones) -> str:
                        f"({it.detalle_coincidencia})")
         out.append(f"Duración: pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_s:.1f} s"
                    + (f" · juez de medición {it.duracion_juez_medicion_s:.1f} s" if it.duracion_juez_medicion_s else ""))
+        if it.numero == corrida.convergencia.get(it.modelo):
+            for k in corrida.no_ejecutadas(it.modelo):
+                out += ["", "-" * 78,
+                        f"INTENTO {k} DE {corrida.n_iteraciones} · {it.modelo.upper()}  →  "
+                        f"{texto_no_ejecutada(it.numero).upper()}", "-" * 78]
     return "\n".join(out) + "\n"
 
 
@@ -972,6 +1055,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--modo", choices=MODOS, default=MODO_DEFAULT)
     parser.add_argument("--arbitro", choices=ARBITROS, default=None,
                         help="Quién decide el veredicto (default: chequeo en autocorrección, juez en independiente)")
+    parser.add_argument("--sin-corte", action="store_true",
+                        help="Autocorrección: seguir iterando después del primer acierto (comportamiento de la Fase 25)")
     parser.add_argument("--sin-medir-juez", action="store_true",
                         help="Con árbitro «chequeo», no llamar al juez-LLM solo para registrar su opinión")
     parser.add_argument("--pequeno", default=MODELO_PEQUENO_DEFAULT)
@@ -994,9 +1079,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nNecesidad: {nid}\nPregunta:  {PREGUNTAS[nid]}")
         print(f"Modelos:   {', '.join(modelos)} · {args.iteraciones} iteraciones c/u · modo {args.modo} · "
               f"árbitro {args.arbitro or arbitro_por_defecto(args.modo)}")
-        print(f"Temperatura: pipeline {TEMPERATURA_ITERACIONES}, juez {TEMPERATURA_JUEZ} · timeout {args.timeout:.0f} s")
+        print(f"Temperatura: pipeline {TEMPERATURA_ITERACIONES}, juez {TEMPERATURA_JUEZ} · timeout {args.timeout:.0f} s"
+              f" · consulta en DuckDB {timeout_consulta(nid):.0f} s")
         corrida = nueva_corrida(nid, modelos=modelos, n=args.iteraciones, modo=args.modo, arbitro=args.arbitro,
-                                medir_juez=not args.sin_medir_juez)
+                                medir_juez=not args.sin_medir_juez,
+                                corta_al_acertar=False if args.sin_corte else None)
 
         def _guardar() -> None:
             if salida:
@@ -1005,6 +1092,10 @@ def main(argv: list[str] | None = None) -> int:
 
         def _avance(it: Iteracion, hechas: int, total: int) -> None:
             _imprimir_iteracion(it, hechas, total)
+            if it.numero == corrida.convergencia.get(it.modelo) and corrida.no_ejecutadas(it.modelo):
+                faltan = corrida.no_ejecutadas(it.modelo)
+                print(f"\n=== Intentos {faltan[0]}-{faltan[-1]} de {corrida.n_iteraciones} · {it.modelo}: "
+                      f"{texto_no_ejecutada(it.numero)} ===")
             _guardar()
 
         correr_iteraciones(
@@ -1013,7 +1104,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         _guardar()
         print(f"\n=== Resumen {nid} ({corrida.estado}: {len(corrida.iteraciones)} de "
-              f"{corrida.total_esperado} intentos) ===")
+              f"{corrida.total_esperado} intentos ejecutados"
+              + (f", {corrida.total_no_ejecutadas} no ejecutados porque ya había convergido"
+                 if corrida.total_no_ejecutadas else "") + ") ===")
         for r in corrida.resumen().values():
             print(_resumen_texto(r))
         if salida:

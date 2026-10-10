@@ -141,7 +141,24 @@ REGLAS DE NEGOCIO (obligatorias, no las repitas como si fueran una pregunta del 
   LIMIT 10
   Si la pregunta es sobre el CATÁLOGO (cuántos productos tiene cada
   pasillo/departamento), no hace falta order_products: basta
-  aisles JOIN products y COUNT(*)."""
+  aisles JOIN products y COUNT(*).
+- order_products tiene ~33.8 millones de filas: unirla consigo misma genera
+  cientos de millones de pares. Para "productos que se compran juntos" (pares
+  de productos del mismo pedido), agrupa PRIMERO por los dos product_id
+  (a.product_id < b.product_id cuenta cada par una vez) y une products SOLO al
+  final, para los nombres de las pocas filas ya agregadas. NUNCA agrupes por
+  product_name ni uses add_to_cart_order para emparejar: se queda sin memoria.
+  Exactamente así:
+  SELECT pa.product_name AS producto_a, pb.product_name AS producto_b, pares.pedidos_juntos
+  FROM (SELECT a.product_id AS id_a, b.product_id AS id_b, COUNT(*) AS pedidos_juntos
+        FROM order_products a
+        JOIN order_products b ON a.order_id = b.order_id AND a.product_id < b.product_id
+        GROUP BY a.product_id, b.product_id
+        ORDER BY pedidos_juntos DESC
+        LIMIT 10) pares
+  JOIN products pa ON pares.id_a = pa.product_id
+  JOIN products pb ON pares.id_b = pb.product_id
+  ORDER BY pares.pedidos_juntos DESC"""
 
 
 def _tablas_y_vistas(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str]]:

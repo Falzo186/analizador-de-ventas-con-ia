@@ -111,6 +111,7 @@ def generar_entrega_ia(
         modelo=modelo,
         timeout_sql_llm_s=timeout_sql_llm_s,
         timeout_respuesta_llm_s=timeout_respuesta_llm_s,
+        timeout_consulta_s=DEFINICIONES[necesidad].timeout_consulta_s or ri.TIMEOUT_S_DEFAULT,
     )
     if not res.ok:
         return EntregaIA(necesidad=necesidad, res=res, documento=None)
