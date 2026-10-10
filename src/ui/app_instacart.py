@@ -35,6 +35,20 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   «📋 Entrega» corre el MISMO pipeline del chat con la pregunta fija de
   N1, N2, N4, N9 y N11 y ofrece el resultado como `{Nx}_ia.json`
   (`src.llm.formato_entrega`). No toca el chat normal.
+- Iteraciones con juez IA (Fase 11): en ⚙️, «Cantidad de iteraciones»
+  (default 5) y los modelos pequeño y grande; en la vista de dashboard, el
+  expander «🧪 Iteraciones con juez IA» corre N veces la pregunta de la
+  necesidad seleccionada con cada modelo (temperatura 0.5) y muestra el
+  veredicto del juez (temperatura 0.0) de cada intento contra la respuesta
+  de referencia (`src.llm.iteraciones_juez`). El chat sigue en 0.0.
+- Panel de iteraciones (Fase 23): pregunta y respuesta de referencia arriba;
+  una tarjeta por intento, "Intento k de N · modelo", con su SQL (y el
+  rechazado, si hubo reintento), resultado crudo, redacción final y de dónde
+  salió (modelo/reintento/plantilla, con la primera redacción descartada) y
+  el veredicto del juez. Modo «Autocorrección encadenada» (default) o
+  «Independientes» en ⚙️. La corrida se guarda antes de empezar y cada
+  intento apenas termina: ninguno se pierde si la ejecución se interrumpe.
+  Export del log (.txt legible y .json) por necesidad o de todas.
 """
 
 from __future__ import annotations
@@ -54,6 +68,7 @@ import streamlit as st
 from src.analytics import registro
 from src.llm import client
 from src.llm import formato_entrega
+from src.llm import iteraciones_juez as ij
 from src.llm import responder_instacart as ri
 from src.ui import dashboard
 
@@ -97,6 +112,10 @@ ESFUERZOS: dict[str, tuple[float, float]] = {
 ESFUERZO_DEFAULT = "Medio"
 CLAVE_MODELO = "modelo_sel"
 CLAVE_ESFUERZO = "esfuerzo_sel"
+#: Fase 11: configuración del modo de iteraciones con juez (popover ⚙️).
+CLAVE_ITERACIONES = "iteraciones_sel"
+CLAVE_MODELO_PEQUENO = "modelo_pequeno_sel"
+CLAVE_MODELO_GRANDE = "modelo_grande_sel"
 #: Configuración (modelo + esfuerzo) congelada al ENVIAR la pregunta en curso.
 CLAVE_CONFIG_EN_CURSO = "config_en_curso"
 AVISO_OLLAMA_CAIDO = (
@@ -124,6 +143,10 @@ def inicializar_estado() -> None:
         st.session_state[CLAVE_ESFUERZO] = ESFUERZO_DEFAULT
     if CLAVE_CONFIG_EN_CURSO not in st.session_state:
         st.session_state[CLAVE_CONFIG_EN_CURSO] = None
+    if CLAVE_ITERACIONES not in st.session_state:
+        st.session_state[CLAVE_ITERACIONES] = ij.ITERACIONES_DEFAULT
+    if CLAVE_MODO_ITERACION not in st.session_state:
+        st.session_state[CLAVE_MODO_ITERACION] = ij.MODO_DEFAULT
     if CLAVE_NECESIDAD in st.session_state:
         # Streamlit borra el estado de un widget con `key` en toda ejecución
         # en la que no se dibuja (aquí, la vista de chat). Reasignarlo lo
@@ -159,6 +182,21 @@ def config_actual() -> dict:
     return {
         "modelo": st.session_state.get(CLAVE_MODELO) or client.modelo_actual_instacart(),
         "esfuerzo": esfuerzo, "timeout_sql_s": timeout_sql, "timeout_respuesta_s": timeout_resp,
+    }
+
+
+def config_iteraciones() -> dict:
+    """Configuración del modo de iteraciones (Fase 11): N, modelo pequeño y
+    grande, y los timeouts del esfuerzo elegido (el juez usa el de respuesta)."""
+    base = config_actual()
+    return {
+        "iteraciones": int(st.session_state.get(CLAVE_ITERACIONES, ij.ITERACIONES_DEFAULT)),
+        "modelo_pequeno": st.session_state.get(CLAVE_MODELO_PEQUENO) or ij.MODELO_PEQUENO_DEFAULT,
+        "modelo_grande": st.session_state.get(CLAVE_MODELO_GRANDE) or ij.MODELO_GRANDE_DEFAULT,
+        "modo": st.session_state.get(CLAVE_MODO_ITERACION) or ij.MODO_DEFAULT,
+        "esfuerzo": base["esfuerzo"],
+        "timeout_sql_s": base["timeout_sql_s"],
+        "timeout_respuesta_s": base["timeout_respuesta_s"],
     }
 
 
@@ -366,6 +404,7 @@ def render_dashboard() -> None:
     with st.container(border=True):
         necesidad = dashboard.render_controles(st.container(), horizontal=True)
     render_entrega_ia()
+    render_iteraciones(necesidad)
     dashboard.render_panel(necesidad)
 
 
@@ -389,7 +428,9 @@ def render_entrega_ia() -> None:
     with st.expander("📋 Entrega: JSON de la IA para las 5 necesidades", expanded=bool(entregas)):
         st.info(AVISO_ENTREGA_IA, icon="ℹ️")
         config = config_actual()
-        st.caption(f"Modelo: `{config['modelo']}` · esfuerzo {config['esfuerzo']} (⚙️ arriba para cambiarlo).")
+        st.caption(f"Modelo: `{config['modelo']}` · esfuerzo {config['esfuerzo']} (⚙️ arriba para cambiarlo). "
+                   "Cada JSON es UNA corrida aparte a temperatura 0.0: no es ninguno de los intentos de "
+                   "«🧪 Iteraciones con juez IA».")
         for nid in formato_entrega.NECESIDADES_ENTREGA:
             st.markdown(f"**{nid} · {TITULOS_NECESIDADES[nid]}** — {formato_entrega.PREGUNTAS_ENTREGA[nid]}")
             if st.button(f"Generar JSON de IA para {nid}", key=f"generar_ia_{nid}", disabled=en_curso,
@@ -417,6 +458,205 @@ def render_entrega_ia() -> None:
                 file_name=formato_entrega.nombre_archivo(nid), mime="application/json",
                 key=f"descargar_ia_{nid}",
             )
+
+
+# ---------------------------------------------------------------------------
+# Fase 11: iteraciones configurables + juez IA contra la respuesta correcta
+# ---------------------------------------------------------------------------
+
+#: {necesidad: ij.CorridaIteraciones} de la última corrida de cada necesidad.
+#: Se guarda ANTES de empezar y cada intento se agrega apenas termina
+#: (Fase 23): si la ejecución se interrumpe, no se pierde ningún intento terminado.
+CLAVE_CORRIDAS = "corridas_iteraciones"
+CLAVE_MODO_ITERACION = "modo_iteracion_sel"
+ETIQUETAS_MODO = {
+    ij.MODO_AUTOCORRECCION: "Autocorrección encadenada",
+    ij.MODO_INDEPENDIENTE: "Independientes",
+}
+AVISO_ITERACIONES = (
+    "Corre la pregunta fija de esta necesidad **N veces con cada modelo** (pequeño y grande), por el "
+    "mismo pipeline del chat (SQL de solo lectura, guardas, validación de cifras), con temperatura "
+    f"{ij.TEMPERATURA_ITERACIONES}. Después de cada intento, el mismo modelo actúa como **juez** "
+    f"(temperatura {ij.TEMPERATURA_JUEZ}) y compara la respuesta con la referencia del software "
+    "determinista (`data/referencia/{nid}.json`). Un intento cuyo pipeline falló cuenta como incorrecto "
+    "sin llamar al juez."
+)
+AVISO_MODO = {
+    ij.MODO_AUTOCORRECCION: (
+        "**Modo autocorrección:** desde el intento 2, cada intento recibe el SQL, el resultado (o error), "
+        "la redacción y el veredicto del juez del intento anterior **del mismo modelo**. Mide si el modelo "
+        "**converge** a la respuesta correcta cuando se le dice en qué falló (no su variabilidad)."
+    ),
+    ij.MODO_INDEPENDIENTE: (
+        "**Modo independiente:** cada intento parte de cero (misma pregunta, sin ver los anteriores). "
+        "Mide la **estabilidad/variabilidad** del modelo."
+    ),
+}
+_ICONOS_VEREDICTO = {ij.CORRECTA: "✅", ij.PARCIAL: "🟡", ij.INCORRECTA: "❌", ij.SIN_VEREDICTO: "❔"}
+#: Mismo criterio que el chat (`render_aviso_cifras`): de dónde salió el texto final.
+ORIGEN_REDACCION = {
+    "modelo": "🤖 redactada por el modelo",
+    "reintento": "🤖 segunda redacción del modelo (la primera alteró cifras)",
+    "plantilla": "🧩 plantilla sin modelo, con los valores reales (el modelo alteró cifras dos veces)",
+}
+
+
+def render_iteracion(it: ij.Iteracion) -> None:
+    """Tarjeta de UN intento, etiquetada "Intento k de N · modelo": todo lo
+    que muestra (SQL, resultado crudo, redacciones, veredicto) es de ese
+    intento y de ningún otro."""
+    with st.container(border=True):
+        st.markdown(f"##### {_ICONOS_VEREDICTO[it.veredicto]} Intento {it.numero} de {it.total} · "
+                    f"`{it.modelo}` → **{it.veredicto.capitalize()}**")
+        if it.retroalimentacion:
+            st.caption(f"↩️ Contexto que recibió este intento (lo que pasó en el intento {it.numero - 1} "
+                       f"de {it.total}):")
+            st.text(it.retroalimentacion)
+        st.markdown(f"**SQL generado** (intento {it.numero} de {it.total})")
+        if it.sql_rechazado:
+            st.caption(f"Primer SQL de este intento, rechazado por: {it.motivo_reintento}")
+            st.code(it.sql_rechazado, language="sql")
+            st.caption("SQL del reintento, el que se ejecutó:")
+        if it.sql:
+            st.code(it.sql, language="sql")
+        else:
+            st.caption("No se llegó a generar SQL.")
+        if it.ok:
+            mostradas = len(it.filas or [])
+            st.markdown(f"**Resultado crudo de la consulta** (intento {it.numero} de {it.total}: "
+                        f"{it.n_filas} fila(s)" + (f", se muestran las primeras {mostradas}" if mostradas < (it.n_filas or 0) else "")
+                        + ")")
+            if it.columnas:
+                st.dataframe(pd.DataFrame(it.filas or [], columns=it.columnas), use_container_width=True)
+            st.markdown(f"**Redacción final** (intento {it.numero} de {it.total} · "
+                        f"{ORIGEN_REDACCION.get(it.origen_respuesta, it.origen_respuesta)}): {it.respuesta}")
+            if it.origen_respuesta in ("reintento", "plantilla"):
+                render_aviso_cifras({"origen_respuesta": it.origen_respuesta,
+                                     "cifras_rechazadas": it.cifras_rechazadas})
+                st.caption(f"Primera redacción del modelo en este intento (descartada): {it.primera_redaccion}")
+                if it.origen_respuesta == "plantilla" and it.segunda_redaccion:
+                    st.caption(f"Segunda redacción (también descartada): {it.segunda_redaccion}")
+        else:
+            st.error(it.error, icon="⚠️")
+        st.markdown(f"**Juez** (intento {it.numero} de {it.total}): {_ICONOS_VEREDICTO[it.veredicto]} "
+                    f"{it.veredicto} — {it.justificacion}")
+        st.caption(
+            f"Intentos de SQL: {it.intentos_sql} · veredicto: {it.origen_veredicto} · "
+            f"pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_s:.1f} s"
+        )
+
+
+def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
+    resumen = corrida.resumen()
+    columnas = st.columns(len(resumen))
+    for col, (etiqueta, r) in zip(columnas, zip(("Pequeño", "Grande"), resumen.values())):
+        col.metric(f"{etiqueta}: {r.modelo}", f"{r.pct_correctas:.0f}% correctas",
+                   help="Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo.")
+        col.caption(f"{r.correctas} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
+                    f"{r.sin_veredicto} sin veredicto (de {r.n} registradas de {corrida.n_iteraciones})")
+        col.caption("Secuencia: " + " → ".join(
+            f"{it.numero}{_ICONOS_VEREDICTO[it.veredicto]}" for it in corrida.de_modelo(r.modelo)))
+
+
+def _referencia_texto(necesidad: str, corrida: ij.CorridaIteraciones | None) -> str | None:
+    if corrida is not None:
+        return corrida.referencia
+    try:
+        return ij.referencia_de(necesidad)
+    except Exception:  # noqa: BLE001 - el panel de la necesidad ya muestra el error de carga
+        return None
+
+
+def render_exportar_todas(corridas: dict) -> None:
+    if not corridas:
+        return
+    orden = sorted(corridas.values(), key=lambda c: int(c.necesidad[1:]))
+    nids = ", ".join(c.necesidad for c in orden)
+    st.caption(f"Exportar el log de **todas** las necesidades corridas en esta sesión ({nids}), para "
+               "pegarlo en otra conversación:")
+    c1, c2 = st.columns(2)
+    c1.download_button(f"⬇️ {ij.NOMBRE_EXPORT_TODAS_TEXTO}", data=ij.exportar_texto(orden).encode("utf-8"),
+                       file_name=ij.NOMBRE_EXPORT_TODAS_TEXTO, mime="text/plain", key="exportar_todas_txt")
+    c2.download_button(f"⬇️ {ij.NOMBRE_EXPORT_TODAS_JSON}", data=ij.exportar_json(orden).encode("utf-8"),
+                       file_name=ij.NOMBRE_EXPORT_TODAS_JSON, mime="application/json", key="exportar_todas_json")
+
+
+def render_iteraciones(necesidad: str) -> None:
+    corridas = st.session_state.setdefault(CLAVE_CORRIDAS, {})
+    corrida = corridas.get(necesidad)
+    en_curso = bool(st.session_state.get("pregunta_en_curso"))
+    with st.expander(f"🧪 Iteraciones con juez IA: modelo pequeño vs grande ({necesidad})",
+                     expanded=corrida is not None):
+        st.info(AVISO_ITERACIONES.replace("{nid}", necesidad), icon="ℹ️")
+        cfg = config_iteraciones()
+        st.markdown(AVISO_MODO[cfg["modo"]])
+        modelos = list(dict.fromkeys([cfg["modelo_pequeno"], cfg["modelo_grande"]]))
+        st.markdown(f"**Pregunta ({necesidad}):** {ij.PREGUNTAS[necesidad]}")
+        referencia = _referencia_texto(necesidad, corrida)
+        if referencia is not None:
+            with st.container(border=True):
+                st.markdown(f"**Respuesta de referencia (correcta)** — hallazgos y valores clave de "
+                            f"`data/referencia/{necesidad}.json`; es lo que ve el juez:")
+                st.text(referencia)
+        st.caption(f"{cfg['iteraciones']} iteraciones × {len(modelos)} modelo(s): `{'`, `'.join(modelos)}` · "
+                   f"modo {ETIQUETAS_MODO[cfg['modo']].lower()} · esfuerzo {cfg['esfuerzo']} (⚙️ arriba para cambiarlo).")
+        if len(modelos) == 1:
+            st.warning("El modelo pequeño y el grande son el mismo: se corre una sola vez.")
+        if st.button(f"▶️ Correr {cfg['iteraciones']} iteraciones por modelo", key=f"iterar_{necesidad}",
+                     disabled=en_curso,
+                     help="Deshabilitado mientras el chat responde una pregunta." if en_curso else None):
+            barra = st.progress(0.0, text="Cargando la respuesta de referencia…")
+            vivo = st.empty()  # intentos terminados, en vivo, mientras corre el resto
+
+            def _inicio(modelo: str, numero: int, hechas: int, total: int) -> None:
+                barra.progress(hechas / total, text=f"Corriendo {modelo} · intento {numero} de "
+                                                    f"{cfg['iteraciones']} ({hechas} de {total} terminados)…")
+
+            def _avance(it: ij.Iteracion, hechas: int, total: int) -> None:
+                barra.progress(hechas / total, text=f"{hechas} de {total} terminados · último: "
+                                                    f"{it.etiqueta} → {it.veredicto}")
+                with vivo.container():
+                    for terminado in corrida.iteraciones:
+                        render_iteracion(terminado)
+
+            try:
+                corrida = ij.nueva_corrida(necesidad, modelos=modelos, n=cfg["iteraciones"], modo=cfg["modo"])
+                corridas[necesidad] = corrida
+                ij.correr_iteraciones(
+                    necesidad, modelos=modelos, corrida=corrida,
+                    timeout_sql_llm_s=cfg["timeout_sql_s"], timeout_respuesta_llm_s=cfg["timeout_respuesta_s"],
+                    al_iniciar=_inicio, al_avanzar=_avance,
+                )
+            except Exception as exc:  # noqa: BLE001 - p. ej. no se pudo cargar la referencia
+                st.error(f"No se pudo correr la prueba de iteraciones: {exc}", icon="⚠️")
+            barra.empty()
+            vivo.empty()  # las tarjetas en vivo se reemplazan por el panel completo de abajo
+        if corrida is None:
+            render_exportar_todas(corridas)
+            return
+
+        st.markdown(f"**Resultado** · {corrida.timestamp} · modo {ETIQUETAS_MODO[corrida.modo].lower()} · "
+                    f"temperatura {corrida.temperatura} (juez {corrida.temperatura_juez}) · "
+                    f"{len(corrida.iteraciones)} de {corrida.total_esperado} intentos registrados")
+        if not corrida.completa:
+            st.warning(f"Corrida interrumpida: se registraron {len(corrida.iteraciones)} de "
+                       f"{corrida.total_esperado} intentos. Se muestran todos los que alcanzaron a terminar; "
+                       "los que faltan no llegaron a correr completos.", icon="⏸️")
+        render_resumen_iteraciones(corrida)
+        for pestana, modelo in zip(st.tabs(corrida.modelos), corrida.modelos):
+            with pestana:
+                for it in corrida.de_modelo(modelo):
+                    render_iteracion(it)
+        c1, c2 = st.columns(2)
+        c1.download_button(
+            f"⬇️ {ij.nombre_archivo_texto(necesidad)} (log legible)", data=ij.a_texto(corrida).encode("utf-8"),
+            file_name=ij.nombre_archivo_texto(necesidad), mime="text/plain", key=f"descargar_iter_txt_{necesidad}",
+        )
+        c2.download_button(
+            f"⬇️ Descargar {ij.nombre_archivo(necesidad)}", data=ij.a_json(corrida).encode("utf-8"),
+            file_name=ij.nombre_archivo(necesidad), mime="application/json", key=f"descargar_iter_{necesidad}",
+        )
+        render_exportar_todas(corridas)
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +742,9 @@ def render_configuracion() -> None:
                "El timeout de la consulta en DuckDB (10 s) es una guarda y no cambia.")
 
     st.divider()
+    render_config_iteraciones(modelos)
+
+    st.divider()
     st.markdown("**Memoria de Ollama**")
     cargados = None
     if modelos is not None:
@@ -533,6 +776,34 @@ def render_configuracion() -> None:
             st.success(f"Liberado: {', '.join(liberados)}. El estado de arriba es el de `/api/ps` después de liberar.")
         for e in errores:
             st.error(e)
+
+
+def _elegir_por_defecto(clave: str, preferido: str, modelos: list[str]) -> None:
+    if st.session_state.get(clave) not in modelos:
+        st.session_state[clave] = preferido if preferido in modelos else modelos[0]
+
+
+def render_config_iteraciones(modelos: list[str] | None) -> None:
+    """Sección «Prueba de iteraciones» del popover ⚙️ (Fase 11)."""
+    st.markdown("**Prueba de iteraciones (juez IA)**")
+    st.number_input(
+        "Cantidad de iteraciones", min_value=ij.ITERACIONES_MIN, max_value=ij.ITERACIONES_MAX, step=1,
+        key=CLAVE_ITERACIONES,
+        help="Cuántas veces se corre la pregunta completa con CADA modelo (pequeño y grande) en "
+             "«🧪 Iteraciones con juez IA» del dashboard. No afecta al chat.",
+    )
+    if modelos:
+        _elegir_por_defecto(CLAVE_MODELO_PEQUENO, ij.MODELO_PEQUENO_DEFAULT, modelos)
+        _elegir_por_defecto(CLAVE_MODELO_GRANDE, ij.MODELO_GRANDE_DEFAULT, modelos)
+        st.selectbox("Modelo pequeño", modelos, key=CLAVE_MODELO_PEQUENO)
+        st.selectbox("Modelo grande", modelos, key=CLAVE_MODELO_GRANDE)
+    st.selectbox(
+        "Modo de iteración", list(ETIQUETAS_MODO), format_func=ETIQUETAS_MODO.get, key=CLAVE_MODO_ITERACION,
+        help="Autocorrección: desde el intento 2, cada intento ve el SQL, el resultado y el veredicto del "
+             "anterior (mide convergencia). Independientes: cada intento desde cero (mide variabilidad).",
+    )
+    st.caption(f"Temperatura: {ij.TEMPERATURA_ITERACIONES} en las iteraciones (con 0.0 salen casi idénticas) "
+               f"y {ij.TEMPERATURA_JUEZ} en el juez. El chat sigue en 0.0. Timeouts: los del esfuerzo.")
 
 
 def render_fijados() -> None:

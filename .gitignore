@@ -10,3 +10,5 @@ data/referencia/
 docs/evidencia/
 data/pdf/
 data/cache/
+data/*.zip
+data/Archivador.zip

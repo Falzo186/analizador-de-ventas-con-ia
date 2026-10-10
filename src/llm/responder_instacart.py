@@ -90,6 +90,12 @@ class ResultadoInstacart:
     origen_respuesta: str | None = None
     #: Cifras de la primera redacción que no estaban en el resultado.
     cifras_rechazadas: list[str] = field(default_factory=list)
+    #: Fase 23 (trazabilidad): primer SQL, si se rechazó y hubo reintento.
+    sql_rechazado: str | None = None
+    #: Fase 23: primera redacción del modelo y, si hubo, la segunda
+    #: (estricta), tal cual las devolvió, aunque se hayan descartado.
+    primera_redaccion: str | None = None
+    segunda_redaccion: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -114,11 +120,14 @@ def redactar_respuesta_instacart(
     *,
     modelo: str | None = None,
     timeout_s: float = TIMEOUT_LLM_RESPUESTA_S,
+    temperatura: float = 0.0,
+    retroalimentacion: str | None = None,
 ) -> str:
     """Llamada 2: convierte el resultado tabular en una frase en español."""
-    sistema, usuario = prompt_respuesta_instacart(pregunta, _tabla_a_texto(columnas, filas))
+    sistema, usuario = prompt_respuesta_instacart(pregunta, _tabla_a_texto(columnas, filas), retroalimentacion)
     return client.chat_con_modelo(
         modelo or client.modelo_actual_instacart(), sistema, usuario, timeout_s=timeout_s,
+        temperatura=temperatura,
     ).strip()
 
 
@@ -145,6 +154,7 @@ def finalizar_redaccion(
     *,
     modelo: str | None = None,
     timeout_s: float = TIMEOUT_LLM_RESPUESTA_S,
+    temperatura: float = 0.0,
 ) -> None:
     """Valida las cifras de `texto` (la primera redacción) contra
     `res.filas` y deja la respuesta final en `res.respuesta` y
@@ -157,6 +167,7 @@ def finalizar_redaccion(
         plantilla sin modelo con los valores reales ("plantilla").
     """
     texto = (texto or "").strip()
+    res.primera_redaccion = texto
     permitidos = valores_permitidos(res.pregunta, res.columnas or [], res.filas or [])
     res.cifras_rechazadas = cifras_invalidas(texto, permitidos)
     if texto and not res.cifras_rechazadas:
@@ -172,9 +183,11 @@ def finalizar_redaccion(
         )
         segundo = client.chat_con_modelo(
             modelo or client.modelo_actual_instacart(), sistema, usuario, timeout_s=timeout_s,
+            temperatura=temperatura,
         ).strip()
     except Exception:  # noqa: BLE001 - si el reintento falla, la plantilla sigue siendo correcta
         segundo = ""
+    res.segunda_redaccion = segundo or None
     if segundo and not cifras_invalidas(segundo, permitidos):
         res.respuesta, res.origen_respuesta = segundo, "reintento"
         return
@@ -226,6 +239,8 @@ def generar_y_ejecutar_con_reintento(
     limite_filas: int = LIMITE_FILAS_DEFAULT,
     timeout_sql_s: float = TIMEOUT_S_DEFAULT,
     contexto: list[TurnoPrevio] | None = None,
+    temperatura: float = 0.0,
+    retroalimentacion: str | None = None,
 ) -> None:
     """Pasos 2-4 con UN reintento como máximo. Llena `res.sql`,
     `res.columnas`, `res.filas`, `res.intentos` y `res.motivo_reintento`;
@@ -242,6 +257,7 @@ def generar_y_ejecutar_con_reintento(
     """
     res.sql = generar_sql_instacart(
         pregunta, descripcion_esquema, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
+        temperatura=temperatura, retroalimentacion=retroalimentacion,
     )
     res.intentos = 1
     try:
@@ -257,8 +273,10 @@ def generar_y_ejecutar_con_reintento(
         motivo = f"{type(exc).__name__}: {exc}"
 
     res.motivo_reintento = motivo
+    res.sql_rechazado = res.sql
     res.sql = generar_sql_reintento_instacart(
         pregunta, descripcion_esquema, res.sql, motivo, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
+        temperatura=temperatura, retroalimentacion=retroalimentacion,
     )
     res.intentos = 2
     res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s)
@@ -274,10 +292,24 @@ def responder_pregunta_instacart(
     timeout_respuesta_llm_s: float = TIMEOUT_LLM_RESPUESTA_S,
     contexto: list[TurnoPrevio] | None = None,
     modelo: str | None = None,
+    temperatura: float = 0.0,
+    retroalimentacion: str | None = None,
 ) -> ResultadoInstacart:
     """Ejecuta el flujo completo y SIEMPRE devuelve un `ResultadoInstacart`
     (nunca lanza una excepción hacia quien llama). `modelo` (Fase 9): el
-    modelo de Ollama a usar; por defecto, `client.modelo_actual_instacart()`."""
+    modelo de Ollama a usar; por defecto, `client.modelo_actual_instacart()`.
+
+    `temperatura` (Fase 11) se aplica a TODAS las llamadas al modelo del
+    flujo (SQL, reintento de SQL, redacción, reintento estricto). El chat y
+    la entrega no la pasan: siguen en 0.0. Solo el modo de iteraciones
+    (`src.llm.iteraciones_juez`) usa un valor mayor, para que N corridas
+    de la misma pregunta no salgan idénticas.
+
+    `retroalimentacion` (Fase 23): texto con el intento anterior de la misma
+    pregunta (SQL, resultado o error, veredicto del juez). Se agrega al
+    mensaje de usuario de la llamada de SQL (y su reintento) y de la
+    primera redacción. Solo lo pasa el modo «autocorrección» de
+    `src.llm.iteraciones_juez`; con None los prompts no cambian."""
     res = ResultadoInstacart(pregunta=pregunta)
 
     try:
@@ -300,7 +332,7 @@ def responder_pregunta_instacart(
             generar_y_ejecutar_con_reintento(
                 con, pregunta, descripcion_esquema, res,
                 timeout_llm_s=timeout_sql_llm_s, limite_filas=limite_filas, contexto=contexto,
-                modelo=modelo,
+                modelo=modelo, temperatura=temperatura, retroalimentacion=retroalimentacion,
             )
         except client.LlmTimeout as exc:
             res.error = f"El modelo tardó demasiado en generar la consulta y se canceló: {exc}"
@@ -325,8 +357,11 @@ def responder_pregunta_instacart(
         try:
             texto = redactar_respuesta_instacart(
                 pregunta, res.columnas, res.filas, modelo=modelo, timeout_s=timeout_respuesta_llm_s,
+                temperatura=temperatura, retroalimentacion=retroalimentacion,
             )
-            finalizar_redaccion(res, texto, modelo=modelo, timeout_s=timeout_respuesta_llm_s)
+            finalizar_redaccion(
+                res, texto, modelo=modelo, timeout_s=timeout_respuesta_llm_s, temperatura=temperatura,
+            )
         except Exception as exc:  # noqa: BLE001
             res.respuesta = None
             res.error = f"Se obtuvo el resultado pero no se pudo redactar la respuesta: {exc}"

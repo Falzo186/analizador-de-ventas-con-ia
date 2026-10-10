@@ -66,28 +66,49 @@ def _con_contexto(pregunta: str, contexto: list[TurnoPrevio] | None) -> str:
     return "\n".join(lineas)
 
 
+def _con_retroalimentacion(usuario: str, retroalimentacion: str | None, cierre: str) -> str:
+    """Fase 23 (iteraciones en modo autocorrección): agrega al mensaje de
+    usuario lo que pasó en el intento anterior de la misma pregunta. Sin
+    retroalimentación devuelve `usuario` tal cual (el chat no cambia)."""
+    if not retroalimentacion:
+        return usuario
+    return f"{usuario}\n\n{retroalimentacion.strip()}\n\n{cierre}"
+
+
+_CIERRE_SQL_RETRO = (
+    "Genera ahora el SQL para la pregunta corrigiendo lo que falló en el intento "
+    "anterior (si fue correcto, conserva el enfoque)."
+)
+_CIERRE_RESPUESTA_RETRO = (
+    "Redacta ahora la respuesta con el resultado de ESTA consulta (no el del intento "
+    "anterior), evitando el error que se señaló."
+)
+
+
 def prompt_sql_instacart(
     pregunta: str, descripcion_esquema: str, contexto: list[TurnoPrevio] | None = None,
+    retroalimentacion: str | None = None,
 ) -> tuple[str, str]:
     """Devuelve (mensaje_de_sistema, mensaje_de_usuario) para la llamada 1
     (texto -> SQL). `descripcion_esquema` viene de
     `src.llm.esquema_instacart.construir_descripcion_esquema()` -- este
     módulo nunca escribe nombres de tabla/columna por su cuenta.
-    `contexto`: turnos previos (Fase 6), ver `_con_contexto`."""
+    `contexto`: turnos previos (Fase 6), ver `_con_contexto`.
+    `retroalimentacion`: intento anterior (Fase 23), ver `_con_retroalimentacion`."""
     sistema = _PLANTILLA_SQL.format(descripcion_esquema=descripcion_esquema)
-    return sistema, _con_contexto(pregunta, contexto)
+    return sistema, _con_retroalimentacion(_con_contexto(pregunta, contexto), retroalimentacion, _CIERRE_SQL_RETRO)
 
 
 def prompt_sql_reintento_instacart(
     pregunta: str, descripcion_esquema: str, sql_anterior: str, motivo: str,
-    contexto: list[TurnoPrevio] | None = None,
+    contexto: list[TurnoPrevio] | None = None, retroalimentacion: str | None = None,
 ) -> tuple[str, str]:
     """Igual que `prompt_sql_instacart`, para el ÚNICO reintento: mismo
     sistema, pero el mensaje de usuario agrega el SQL rechazado y el motivo
     EXACTO del rechazo (el de `validar_sql()` o el error del motor)."""
     sistema = _PLANTILLA_SQL.format(descripcion_esquema=descripcion_esquema)
     usuario = (
-        f"{_con_contexto(pregunta, contexto)}\n\n"
+        f"{_con_retroalimentacion(_con_contexto(pregunta, contexto), retroalimentacion, _CIERRE_SQL_RETRO)}\n\n"
         f"Tu consulta anterior fue:\n{sql_anterior.strip()}\n\n"
         f"Tu consulta anterior fue rechazada porque: {motivo.strip()}\n"
         "Genera solo una sentencia SELECT válida sobre las tablas reales."
@@ -114,13 +135,16 @@ departamentos -- SIN precios ni datos monetarios de ningún tipo).
 """
 
 
-def prompt_respuesta_instacart(pregunta: str, tabla_resultado: str) -> tuple[str, str]:
-    """Devuelve (sistema, usuario) para la llamada 2 (resultado -> texto)."""
+def prompt_respuesta_instacart(
+    pregunta: str, tabla_resultado: str, retroalimentacion: str | None = None,
+) -> tuple[str, str]:
+    """Devuelve (sistema, usuario) para la llamada 2 (resultado -> texto).
+    `retroalimentacion`: intento anterior (Fase 23, modo autocorrección)."""
     usuario = (
         f"Pregunta del usuario:\n{pregunta.strip()}\n\n"
         f"Resultado de la consulta:\n{tabla_resultado}"
     )
-    return _SISTEMA_RESPUESTA, usuario
+    return _SISTEMA_RESPUESTA, _con_retroalimentacion(usuario, retroalimentacion, _CIERRE_RESPUESTA_RETRO)
 
 
 def prompt_respuesta_estricta_instacart(
@@ -140,3 +164,44 @@ def prompt_respuesta_estricta_instacart(
         f"Valores exactos que puedes usar: {', '.join(valores_exactos)}."
     )
     return sistema, usuario
+
+
+#: Fase 11: veredictos posibles del juez, en el texto exacto que se le pide.
+VEREDICTOS_JUEZ: tuple[str, ...] = ("correcta", "parcialmente correcta", "incorrecta")
+
+_SISTEMA_JUEZ = """\
+Eres un evaluador estricto. Comparas la RESPUESTA GENERADA por un asistente
+con la RESPUESTA DE REFERENCIA, que es correcta: la calculó un programa
+determinista sobre los mismos datos (dataset Instacart). Calificas qué tan
+apegada está la respuesta generada a la referencia en CONTENIDO (datos y
+conclusiones), no en redacción ni en estilo.
+
+- "correcta": responde lo que se pregunta y sus datos o conclusiones
+  principales coinciden con la referencia (se aceptan cifras redondeadas).
+- "parcialmente correcta": acierta en algo (alguna cifra o conclusión
+  coincide con la referencia), pero responde solo una parte de la pregunta,
+  omite lo principal o mezcla aciertos con errores.
+- "incorrecta": no responde la pregunta, contradice la referencia, sus
+  cifras no coinciden con ninguna de la referencia, o dice que no hay datos
+  cuando la referencia sí los tiene.
+
+La referencia es más detallada que una respuesta breve: no exijas que repita
+todo, pero sí lo esencial para la pregunta. No uses conocimiento propio:
+solo la referencia decide qué es correcto.
+
+Responde ÚNICAMENTE con un objeto JSON, sin texto adicional:
+{"veredicto": "correcta" | "parcialmente correcta" | "incorrecta",
+ "justificacion": "<una o dos frases: en qué se parece a la referencia o en qué falló>"}
+"""
+
+
+def prompt_juez_instacart(pregunta: str, referencia: str, respuesta: str) -> tuple[str, str]:
+    """(sistema, usuario) del juez de la Fase 11 (`src.llm.iteraciones_juez`):
+    la pregunta, la respuesta de referencia (del software determinista) y
+    la respuesta generada en una iteración."""
+    usuario = (
+        f"PREGUNTA:\n{pregunta.strip()}\n\n"
+        f"RESPUESTA DE REFERENCIA (correcta):\n{referencia.strip()}\n\n"
+        f"RESPUESTA GENERADA (a evaluar):\n{respuesta.strip()}"
+    )
+    return _SISTEMA_JUEZ, usuario

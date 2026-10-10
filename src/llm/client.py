@@ -105,6 +105,7 @@ def chat_con_modelo(
     usuario: str,
     temperatura: float = 0.0,
     timeout_s: float | None = None,
+    formato_json: bool = False,
 ) -> str:
     """Envía un mensaje de sistema + uno de usuario al `modelo` indicado y
     devuelve el texto. El modelo es parámetro explícito: la ruta Instacart
@@ -115,7 +116,12 @@ def chat_con_modelo(
     `timeout_s`, si se pasa, limita cuánto se espera la respuesta HTTP de
     Ollama (usa un `ollama.Client` propio en vez del cliente global de
     módulo, que no expone timeout).
+
+    `formato_json=True` (Fase 11, juez de iteraciones) pide a Ollama
+    `format="json"`: la salida queda restringida a JSON válido. Por
+    defecto no se pasa nada, así que las llamadas existentes no cambian.
     """
+    extra = {"format": "json"} if formato_json else {}
     try:
         if timeout_s is not None:
             cliente = ollama.Client(timeout=timeout_s)
@@ -126,6 +132,7 @@ def chat_con_modelo(
                     {"role": "user", "content": usuario},
                 ],
                 options={"temperature": temperatura},
+                **extra,
             )
         else:
             respuesta = ollama.chat(
@@ -135,6 +142,7 @@ def chat_con_modelo(
                     {"role": "user", "content": usuario},
                 ],
                 options={"temperature": temperatura},
+                **extra,
             )
     except httpx.TimeoutException as exc:
         raise LlmTimeout(

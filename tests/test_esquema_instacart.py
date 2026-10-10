@@ -137,3 +137,66 @@ def test_cache_sin_campo_reglas_se_reconstruye(con, tmp_path):
     ruta_cache.write_text(json.dumps(datos), encoding="utf-8")
 
     assert "PRE-HOTFIX" not in construir_descripcion_esquema(con, cache_path=ruta_cache)
+
+
+# ---------------------------------------------------------------------------
+# Fase 12: ranking de productos -> product_name solo existe en products
+# ---------------------------------------------------------------------------
+
+def test_regla_product_name_obliga_join_con_products():
+    """qwen generaba `SELECT product_name FROM order_products GROUP BY
+    product_name` -> Binder Error (product_name está en products)."""
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    reglas = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert ("NUNCA selecciones ni agrupes por product_name directamente desde "
+            "order_products: esa tabla solo tiene product_id, siempre hay que "
+            "unir con products.") in reglas
+    assert ("SELECT p.product_name, COUNT(*) AS n FROM order_products op "
+            "JOIN products p ON op.product_id = p.product_id "
+            "GROUP BY p.product_name ORDER BY n DESC LIMIT 10") in reglas
+
+
+def test_describe_compacto_de_todas_las_tablas_sin_filas_de_ejemplo(con):
+    from src.llm.esquema_instacart import describir_columnas
+    desc = describir_columnas(con)
+    for tabla in TABLAS_REALES:
+        assert f"- {tabla}: " in desc
+    assert "ej:" not in desc
+    linea_op = next(l for l in desc.splitlines() if l.startswith("- order_products: "))
+    assert "eval_set" not in linea_op and "product_name" not in linea_op
+    assert "eval_set VARCHAR" in next(l for l in desc.splitlines() if l.startswith("- orders: "))
+
+
+def test_descripcion_incluye_describe_y_reglas(con, tmp_path):
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO, describir_columnas
+    desc = construir_descripcion_esquema(con, cache_path=tmp_path / "esquema.json")
+    assert describir_columnas(con) in desc and REGLAS_DE_NEGOCIO in desc
+
+
+def test_reglas_eval_set_y_tasa_de_recompra():
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    reglas = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert "eval_set NO existe en order_products" in reglas
+    assert "no asumas columnas, verifica contra el esquema dado" in reglas
+    assert ("SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra "
+            "FROM order_products op JOIN products p ON op.product_id = p.product_id "
+            "GROUP BY p.product_name HAVING COUNT(*) >= 50 ORDER BY tasa_recompra DESC LIMIT 10") in reglas
+
+
+def test_regla_no_recompran_compara_contra_el_total():
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    reglas = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert ("HAVING COUNT(*) >= 50 AND SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) = 0 "
+            "ORDER BY veces_comprado DESC LIMIT 10") in reglas
+    assert "NUNCA ordenes por COUNT(*) WHERE reordered=0 solo" in reglas
+
+
+def test_regla_aisles_departments_solo_via_products():
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    reglas = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert ("aisles y departments SOLO se pueden unir a través de products "
+            "(products.aisle_id/products.department_id); NUNCA unas aisles o "
+            "departments directamente con order_products u orders") in reglas
+    assert "MAL (aisle_id no existe en order_products): JOIN order_products op ON a.aisle_id = op.aisle_id" in reglas
+    assert ("FROM aisles a JOIN products p ON p.aisle_id = a.aisle_id "
+            "JOIN order_products op ON op.product_id = p.product_id") in reglas

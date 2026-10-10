@@ -71,7 +71,77 @@ REGLAS DE NEGOCIO (obligatorias, no las repitas como si fueran una pregunta del 
   usuario con datos de entrenamiento).
 - No existe ninguna fecha real (ni de calendario ni de "hoy"): no asumas
   ni inventes un calendario. Todo lo temporal en este dataset es relativo
-  (order_number, days_since_prior_order), nunca una fecha absoluta."""
+  (order_number, days_since_prior_order), nunca una fecha absoluta.
+- NUNCA selecciones ni agrupes por product_name directamente desde
+  order_products: esa tabla solo tiene product_id, siempre hay que unir con
+  products. Para "productos más/menos vendidos/comprados/pedidos" (o
+  cualquier ranking de productos), cuenta filas de order_products y une con
+  products por product_id, exactamente así:
+  SELECT p.product_name, COUNT(*) AS n
+  FROM order_products op
+  JOIN products p ON op.product_id = p.product_id
+  GROUP BY p.product_name
+  ORDER BY n DESC
+  LIMIT 10
+  (para "menos vendidos" usa ORDER BY n ASC). Igual para pasillos y
+  departamentos: el nombre está en aisles.aisle y departments.department;
+  se llega con JOIN aisles a ON p.aisle_id = a.aisle_id y
+  JOIN departments d ON p.department_id = d.department_id.
+- eval_set NO existe en order_products (ni en order_products__prior ni en
+  order_products__train): está SOLO en orders. Revisa en el DESCRIBE en qué
+  tabla está cada columna antes de usarla; no asumas columnas, verifica
+  contra el esquema dado. Para filtrar productos por eval_set une con
+  orders: JOIN orders o ON op.order_id = o.order_id ... WHERE o.eval_set = 'train'.
+- reordered (en order_products) vale 1 si el usuario YA había comprado ese
+  producto antes (recompra) y 0 si es la primera vez. Para "productos que se
+  recompran de forma consistente vs. se prueban y se abandonan" calcula la
+  tasa de recompra por producto (recompras / veces comprado), exactamente así:
+  SELECT p.product_name,
+         COUNT(*) AS veces_comprado,
+         SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) AS recompras,
+         SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra
+  FROM order_products op
+  JOIN products p ON op.product_id = p.product_id
+  GROUP BY p.product_name
+  HAVING COUNT(*) >= 50
+  ORDER BY tasa_recompra DESC
+  LIMIT 10
+  Tasa alta = se recompra consistentemente (ORDER BY tasa_recompra DESC);
+  tasa baja = se prueba y se abandona (ORDER BY tasa_recompra ASC).
+- Para "productos que NO se recompran" / "se compran una vez y no se
+  vuelven a comprar" / "se prueban y se abandonan": agrupa por producto,
+  cuenta el total de compras y el total de recompras, y quédate con los que
+  tienen recompras = 0, con un mínimo de compras para que sea significativo,
+  exactamente así:
+  SELECT p.product_name,
+         COUNT(*) AS veces_comprado,
+         SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) AS recompras
+  FROM order_products op
+  JOIN products p ON op.product_id = p.product_id
+  GROUP BY p.product_name
+  HAVING COUNT(*) >= 50 AND SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) = 0
+  ORDER BY veces_comprado DESC
+  LIMIT 10
+  NUNCA ordenes por COUNT(*) WHERE reordered=0 solo -- eso favorece a los
+  productos más populares en general, no a los que realmente no se
+  recompran. Siempre compara contra el total.
+- aisles y departments SOLO se pueden unir a través de products
+  (products.aisle_id/products.department_id); NUNCA unas aisles o
+  departments directamente con order_products u orders -- siempre
+  aisles/departments -> JOIN products -> JOIN order_products.
+  MAL (aisle_id no existe en order_products):
+  JOIN order_products op ON a.aisle_id = op.aisle_id
+  BIEN (productos distintos vendidos por pasillo):
+  SELECT a.aisle, COUNT(DISTINCT op.product_id) AS productos_distintos
+  FROM aisles a
+  JOIN products p ON p.aisle_id = a.aisle_id
+  JOIN order_products op ON op.product_id = p.product_id
+  GROUP BY a.aisle
+  ORDER BY productos_distintos DESC
+  LIMIT 10
+  Si la pregunta es sobre el CATÁLOGO (cuántos productos tiene cada
+  pasillo/departamento), no hace falta order_products: basta
+  aisles JOIN products y COUNT(*)."""
 
 
 def _tablas_y_vistas(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str]]:
@@ -101,6 +171,18 @@ def _describir_tabla(con: duckdb.DuckDBPyConnection, nombre: str, tipo: str) -> 
     return "\n".join(lineas)
 
 
+def describir_columnas(con: duckdb.DuckDBPyConnection) -> str:
+    """DESCRIBE compacto (tabla, columna, tipo) de TODAS las tablas/vistas
+    reales, sin conteos ni filas de ejemplo: una línea por tabla, para que
+    el modelo vea de un vistazo qué columnas tiene cada una (Fase 12)."""
+    lineas = ["DESCRIBE (tabla: columna TIPO, ...) -- ninguna columna existe fuera de su tabla:"]
+    for nombre, _tipo in _tablas_y_vistas(con):
+        cols = con.execute(f"DESCRIBE {nombre}").fetchall()
+        # DESCRIBE: (column_name, column_type, null, key, default, extra)
+        lineas.append(f"- {nombre}: " + ", ".join(f"{c[0]} {c[1]}" for c in cols))
+    return "\n".join(lineas)
+
+
 def _construir_sin_cache(con: duckdb.DuckDBPyConnection) -> str:
     bloques = [
         "ESQUEMA REAL de data/instacart.duckdb (obtenido por introspección en el "
@@ -111,6 +193,8 @@ def _construir_sin_cache(con: duckdb.DuckDBPyConnection) -> str:
     for nombre, tipo in _tablas_y_vistas(con):
         bloques.append(_describir_tabla(con, nombre, tipo))
         bloques.append("")
+    bloques.append(describir_columnas(con))
+    bloques.append("")
     bloques.append(REGLAS_DE_NEGOCIO)
     return "\n".join(bloques)
 

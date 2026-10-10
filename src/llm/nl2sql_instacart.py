@@ -55,13 +55,19 @@ def generar_sql_instacart(
     modelo: str | None = None,
     timeout_s: float | None = None,
     contexto: list[TurnoPrevio] | None = None,
+    temperatura: float = 0.0,
+    retroalimentacion: str | None = None,
 ) -> str:
     """Pide al modelo (Instacart, `client.modelo_actual_instacart()`) el
     SQL para `pregunta`, dado el esquema ya introspeccionado, y lo
-    devuelve limpio. `contexto`: turnos previos de la conversación."""
-    sistema, usuario = prompt_sql_instacart(pregunta, descripcion_esquema, contexto)
+    devuelve limpio. `contexto`: turnos previos de la conversación.
+    `temperatura`: 0.0 en el chat; solo el modo de iteraciones de la
+    Fase 11 (`src.llm.iteraciones_juez`) pasa un valor mayor.
+    `retroalimentacion`: intento anterior (Fase 23, modo autocorrección)."""
+    sistema, usuario = prompt_sql_instacart(pregunta, descripcion_esquema, contexto, retroalimentacion)
     crudo = client.chat_con_modelo(
         modelo or client.modelo_actual_instacart(), sistema, usuario, timeout_s=timeout_s,
+        temperatura=temperatura,
     )
     return limpiar_sql(crudo)
 
@@ -75,13 +81,16 @@ def generar_sql_reintento_instacart(
     modelo: str | None = None,
     timeout_s: float | None = None,
     contexto: list[TurnoPrevio] | None = None,
+    temperatura: float = 0.0,
+    retroalimentacion: str | None = None,
 ) -> str:
     """Segundo (y último) intento: vuelve a pedir el SQL incluyendo el SQL
     rechazado y el motivo exacto del rechazo."""
     sistema, usuario = prompt_sql_reintento_instacart(
-        pregunta, descripcion_esquema, sql_anterior, motivo, contexto,
+        pregunta, descripcion_esquema, sql_anterior, motivo, contexto, retroalimentacion,
     )
     crudo = client.chat_con_modelo(
         modelo or client.modelo_actual_instacart(), sistema, usuario, timeout_s=timeout_s,
+        temperatura=temperatura,
     )
     return limpiar_sql(crudo)
