@@ -1,4 +1,4 @@
-"""PDF determinista (sin IA) del reporte de las 11 necesidades analíticas.
+"""PDF determinista (sin IA) del reporte de las 10 necesidades analíticas (Fase 24).
 
 Regla central (Fase 4, no reabrir): este módulo NUNCA llama a
 `src.analytics.*.calcular()` en vivo. Todo dato sale de `src.dashboard.
@@ -11,8 +11,7 @@ MISMAS funciones de `src.dashboard.graficas_datos` que usa el dashboard de
 Streamlit (Altair) -- ningún DataFrame se vuelve a seleccionar aquí.
 
 CLI:
-    python -m src.pdf.generador --db data/instacart.duckdb \
-        --agg data/instacart_agg.duckdb --out data/pdf/reporte_instacart.pdf [--forzar]
+    python -m src.pdf.generador --db data/instacart.duckdb --out data/pdf/reporte_instacart.pdf [--forzar]
 """
 
 from __future__ import annotations
@@ -59,6 +58,7 @@ from reportlab.platypus.tableofcontents import TableOfContents  # noqa: E402
 from scripts.generar_ficha_dataset import Ficha, construir_ficha  # noqa: E402
 from src.analytics.conexion import abrir_conexion  # noqa: E402
 from src.analytics.contrato import ResultadoNecesidad  # noqa: E402
+from src.analytics.necesidades import columnas_ordenadas  # noqa: E402
 from src.analytics.registro import NECESIDADES  # noqa: E402
 from src.dashboard import graficas_datos as gd  # noqa: E402
 from src.dashboard import servicio  # noqa: E402
@@ -84,11 +84,12 @@ TAMANO_FUENTE_TABLA = 8.5
 GROSOR_BORDE_RECUADRO = 1
 PADDING_RECUADRO = 6
 ANCHO_IMAGEN_GRANDE_CM = 16.0
-ANCHO_IMAGEN_CHICA_CM = 15.5
 
 FIG_ANCHO_IN = 8.5
 FIG_ALTO_IN = 4.4
 FIG_ALTO_CHICO_IN = 3.4
+FIG_ALTO_POR_BARRA_IN = 0.38
+FILAS_TABLA_RESULTADO_MAX = 10
 FIG_DPI = 150
 
 COLOR_PRIMARIO = "#2a9d8f"
@@ -99,10 +100,9 @@ COLOR_FONDO_LIMITACION = colors.Color(1.0, 0.965, 0.82)  # amarillo suave
 COLOR_BORDE_LIMITACION = colors.Color(0.80, 0.62, 0.0)
 COLOR_FONDO_TABLA_HEADER = colors.Color(0.89, 0.93, 0.94)
 
-NECESIDADES_ORDEN = [f"N{i}" for i in range(1, 12)]
+NECESIDADES_ORDEN = list(NECESIDADES)
 
 DB_PATH_DEFAULT = servicio.DB_PATH_DEFAULT
-AGG_PATH_DEFAULT = servicio.AGG_PATH_DEFAULT
 OUT_DIR_DEFAULT = servicio.OUT_DIR_DEFAULT
 OUT_PDF_DEFAULT = Path("data/pdf/reporte_instacart.pdf")
 RAW_DIR_DEFAULT = Path("data/instacart/raw")
@@ -184,239 +184,23 @@ def _fig_vacia(titulo: str) -> Figure:
     return fig
 
 
-def _fig_n1(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n1(r)
-    if df.empty:
-        return _fig_vacia("Dispersión: volumen vs. tasa de recompra")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    for clase, color in (("Asegurar inventario", COLOR_PRIMARIO), ("Revisar/retirar", COLOR_SECUNDARIO)):
-        sub = df[df["clasificacion"] == clase]
-        ax.scatter(sub["lineas"], sub["tasa_recompra"], alpha=0.55, color=color, label=clase, edgecolors="none")
-    ax.set_xscale("log")
-    ax.set_xlabel("Volumen (líneas, escala log)")
-    ax.set_ylabel("Tasa de recompra")
-    ax.legend(loc="best", fontsize=TAMANO_FUENTE_NOTA)
-    ax.set_title("Dispersión: volumen vs. tasa de recompra, por clasificación")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n2(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n2(r)
-    if df.empty:
-        return _fig_vacia("Top pares por lift")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    df = df.iloc[::-1]
-    ax.barh(df["par"], df["lift"], color=COLOR_PRIMARIO)
-    ax.set_xlabel("Lift")
-    ax.tick_params(axis="y", labelsize=TAMANO_FUENTE_NOTA)
-    ax.set_title("Top 20 pares por lift (de los 50 en la tabla)")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n3(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n3(r)
-    if df.empty:
-        return _fig_vacia("Mapa de calor: pedidos por día x hora")
-    pivote = df.pivot(index="order_dow", columns="order_hour_of_day", values="n_pedidos")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    im = ax.imshow(pivote.values, aspect="auto", cmap="Blues")
-    ax.set_xticks(range(len(pivote.columns)))
-    ax.set_xticklabels(pivote.columns, fontsize=TAMANO_FUENTE_NOTA)
-    ax.set_yticks(range(len(pivote.index)))
-    ax.set_yticklabels(pivote.index, fontsize=TAMANO_FUENTE_NOTA)
-    ax.set_xlabel("Hora del día (0-23, anónima)")
-    ax.set_ylabel("Día de la semana (0-6, anónimo)")
-    fig.colorbar(im, ax=ax, label="Pedidos")
-    ax.set_title("Mapa de calor: pedidos por día x hora")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n4(r: ResultadoNecesidad) -> Figure:
-    datos = gd.datos_n4(r)
+def _fig_barras(r: ResultadoNecesidad) -> Figure | None:
+    """Barras del ranking de la necesidad (mismo DataFrame que el panel
+    Altair, `gd.datos_grafica`). None si la necesidad es de tipo escalar."""
+    datos = gd.datos_grafica(r)
+    if datos is None:
+        return None
     if datos.df.empty:
-        return _fig_vacia("Distribución de razón (top 50)")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    ax.hist(datos.df["razon"], bins=20, color=COLOR_NEUTRO, edgecolor="white")
-    ax.axvline(datos.umbral_razon, color=COLOR_CORTE, linestyle="--", label=f"UMBRAL_RAZON = {datos.umbral_razon}")
-    ax.set_xlabel("Razón último/típico")
-    ax.set_ylabel("Usuarios (dentro del top 50 mostrado)")
-    ax.legend(fontsize=TAMANO_FUENTE_NOTA)
-    ax.set_title("Distribución de razón (top 50 por razón) con línea de UMBRAL_RAZON")
+        return _fig_vacia(datos.titulo)
+    df = datos.df.iloc[::-1]  # la primera fila arriba
+    n = len(df)
+    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, max(FIG_ALTO_CHICO_IN, FIG_ALTO_POR_BARRA_IN * n)))
+    colores = [COLOR_PRIMARIO if (n - 1 - k) < datos.filas_respuesta else COLOR_NEUTRO for k in range(n)]
+    ax.barh(df[datos.categoria].astype(str), df[datos.valor], color=colores)
+    ax.set_xlabel(datos.valor)
+    ax.set_title(datos.titulo, fontsize=TAMANO_FUENTE_NORMAL)
     fig.tight_layout()
     return fig
-
-
-def _fig_n5(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n5(r)
-    if df.empty:
-        return _fig_vacia("Top productos por índice_ancla")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    df = df.iloc[::-1]
-    ax.barh(df["product_name"], df["indice_ancla"], color=COLOR_PRIMARIO)
-    ax.set_xlabel("Índice ancla")
-    ax.tick_params(axis="y", labelsize=TAMANO_FUENTE_NOTA)
-    ax.set_title("Top 20 productos por índice_ancla (entre elegibles)")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n6(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n6(r)
-    if df.empty:
-        return _fig_vacia("Departamentos por cuadrante")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    cuadrantes = sorted(df["cuadrante"].unique())
-    paleta = [COLOR_PRIMARIO, COLOR_SECUNDARIO, COLOR_NEUTRO, "#8338ec"]
-    for cuadrante, color in zip(cuadrantes, paleta):
-        sub = df[df["cuadrante"] == cuadrante]
-        ax.scatter(sub["lineas"], sub["tasa_recompra"], s=90, alpha=0.8, color=color, label=cuadrante)
-    ax.set_xlabel("Volumen (líneas)")
-    ax.set_ylabel("Tasa de recompra")
-    ax.legend(loc="best", fontsize=TAMANO_FUENTE_NOTA)
-    ax.set_title("Departamentos por cuadrante (volumen vs. tasa de recompra)")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n7_linea(r: ResultadoNecesidad) -> Figure:
-    datos = gd.datos_n7(r)
-    if datos.df_k.empty:
-        return _fig_vacia("Tamaño medio por número de pedido (k)")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_CHICO_IN))
-    ax.plot(datos.df_k["k"], datos.df_k["tamano_medio"], color=COLOR_PRIMARIO, marker=".")
-    ax.set_xlabel("Número de pedido (order_number)")
-    ax.set_ylabel("Tamaño medio")
-    ax.set_title("Tamaño medio por número de pedido (k) — curva de composición, no trayectoria individual")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n7_pareado(r: ResultadoNecesidad) -> Figure:
-    datos = gd.datos_n7(r)
-    if datos.df_pareado.empty:
-        return _fig_vacia("Comparación pareada: pedido 1 vs 10")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_CHICO_IN))
-    colores = [COLOR_PRIMARIO if v >= 0 else COLOR_SECUNDARIO for v in datos.df_pareado["diferencia_media"]]
-    ax.barh(datos.df_pareado["métrica"], datos.df_pareado["diferencia_media"], color=colores)
-    ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Diferencia media (pedido 10 − pedido 1)")
-    ax.set_title(f"Comparación pareada: mismo usuario, pedido 1 vs 10 (n={datos.n_usuarios_pareado:,})")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n8(r: ResultadoNecesidad) -> Figure:
-    datos = gd.datos_n8(r)
-    if datos.df.empty:
-        return _fig_vacia("Histograma de índice_novedad")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    ax.bar(datos.df["bin_decimo"], datos.df["n_usuarios"], color=COLOR_NEUTRO)
-    if datos.corte_rutinario is not None and datos.corte_explorador is not None:
-        ax.axvline(datos.corte_rutinario * 10, color=COLOR_CORTE, linestyle="--", label="rutinario (P25)")
-        ax.axvline(datos.corte_explorador * 10, color=COLOR_CORTE, linestyle=":", label="explorador (P75)")
-        ax.legend(fontsize=TAMANO_FUENTE_NOTA)
-    ax.set_xlabel("índice_novedad (bin de ancho 0.1)")
-    ax.set_ylabel("Usuarios")
-    ax.set_title("Histograma de índice_novedad, con los cortes rutinario/explorador")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n9_histograma(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n9_histograma(r)
-    if df.empty:
-        return _fig_vacia("Histograma de tamaño de pedido")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_CHICO_IN))
-    colores = [COLOR_SECUNDARIO if final else COLOR_NEUTRO for final in df["es_cubo_final"]]
-    ax.bar(df["tamano_bin"], df["pedidos"], color=colores)
-    ax.set_xlabel("Tamaño de pedido (último bin = TAM_MAX+ agrupado)")
-    ax.set_ylabel("Pedidos")
-    ax.set_title("Histograma de tamaño de pedido (naranja = cubo final)")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n9_factor(r: ResultadoNecesidad, factor_key: str) -> Figure:
-    df = gd.datos_n9_factor(r, factor_key)
-    titulo = f"Desviación intra-usuario por {gd.FACTORES_N9[factor_key].lower()}"
-    if df.empty:
-        return _fig_vacia(titulo)
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_CHICO_IN))
-    colores = [COLOR_PRIMARIO if v >= 0 else COLOR_SECUNDARIO for v in df["desviacion_intra_usuario"]]
-    ax.bar(df["valor"].astype(str), df["desviacion_intra_usuario"], color=colores)
-    ax.axhline(0, color="black", linewidth=0.8)
-    ax.set_xlabel(gd.FACTORES_N9[factor_key])
-    ax.set_ylabel("Desviación intra-usuario (productos)")
-    ax.tick_params(axis="x", labelsize=TAMANO_FUENTE_NOTA, rotation=45)
-    ax.set_title(titulo)
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n10(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n10(r)
-    if df.empty:
-        return _fig_vacia("Tasa de recompra por tramo")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_CHICO_IN))
-    ax.bar(df["tramo"].astype(str), df["tasa_recompra"], color=COLOR_PRIMARIO)
-    ax.set_xlabel("Tramo del carrito (0=inicio ... 4=final)")
-    ax.set_ylabel("Tasa de recompra")
-    ax.set_title("Tasa de recompra por tramo (posición relativa en el carrito)")
-    fig.tight_layout()
-    return fig
-
-
-def _fig_n11(r: ResultadoNecesidad) -> Figure:
-    df = gd.datos_n11(r)
-    if df.empty:
-        return _fig_vacia("Comparación de métodos y K: hit-rate")
-    fig, ax = plt.subplots(figsize=(FIG_ANCHO_IN, FIG_ALTO_IN))
-    metodos = list(df["metodo"].unique())
-    ks = sorted(df["k"].unique())
-    ancho_barra = 0.8 / max(len(metodos), 1)
-    paleta = [COLOR_PRIMARIO, COLOR_SECUNDARIO, COLOR_NEUTRO, "#8338ec"]
-    for i, metodo in enumerate(metodos):
-        sub = df[df["metodo"] == metodo].set_index("k").reindex(ks)
-        posiciones = [k_idx + i * ancho_barra for k_idx in range(len(ks))]
-        ax.bar(posiciones, sub["hit_rate"], width=ancho_barra, label=metodo, color=paleta[i % len(paleta)])
-    ax.set_xticks([k_idx + ancho_barra * (len(metodos) - 1) / 2 for k_idx in range(len(ks))])
-    ax.set_xticklabels([str(k) for k in ks])
-    ax.set_xlabel("K")
-    ax.set_ylabel("Hit-rate")
-    ax.legend(fontsize=TAMANO_FUENTE_NOTA, loc="best")
-    ax.set_title("Comparación de métodos y K: hit-rate")
-    fig.tight_layout()
-    return fig
-
-
-GRAFICOS_PDF = {
-    "N1": lambda r: [("Dispersión: volumen vs. tasa de recompra, por clasificación", _fig_n1(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N2": lambda r: [("Top 20 pares por lift (de los 50 en la tabla)", _fig_n2(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N3": lambda r: [("Mapa de calor: pedidos por día x hora", _fig_n3(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N4": lambda r: [("Distribución de razón con línea de UMBRAL_RAZON", _fig_n4(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N5": lambda r: [("Top 20 productos por índice_ancla", _fig_n5(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N6": lambda r: [("Departamentos por cuadrante", _fig_n6(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N7": lambda r: [
-        ("Tamaño medio por número de pedido (k)", _fig_n7_linea(r), ANCHO_IMAGEN_CHICA_CM),
-        ("Comparación pareada: pedido 1 vs 10", _fig_n7_pareado(r), ANCHO_IMAGEN_CHICA_CM),
-    ],
-    "N8": lambda r: [("Histograma de índice_novedad, con los cortes", _fig_n8(r), ANCHO_IMAGEN_GRANDE_CM)],
-    "N9": lambda r: [
-        ("Histograma de tamaño de pedido", _fig_n9_histograma(r), ANCHO_IMAGEN_CHICA_CM),
-        ("Desviación intra-usuario por hora del día (factor por default del panel)",
-         _fig_n9_factor(r, next(iter(gd.FACTORES_N9))), ANCHO_IMAGEN_CHICA_CM),
-    ],
-    "N10": lambda r: [("Tasa de recompra por tramo del carrito", _fig_n10(r), ANCHO_IMAGEN_CHICA_CM)],
-    "N11": lambda r: [("Comparación de métodos y K: hit-rate", _fig_n11(r), ANCHO_IMAGEN_GRANDE_CM)],
-}
-
-# Necesidades cuya limitación crítica el brief exige mostrar sin excepción
-# (ya se muestran para las 11, esta lista solo documenta cuáles son
-# "obligatorias y no omitibles" según el enunciado de esta fase).
-NECESIDADES_LIMITACION_CRITICA = {"N1", "N4", "N5", "N7", "N8", "N9", "N10", "N11"}
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +245,26 @@ def _tabla_valores_clave(r: ResultadoNecesidad) -> Table:
         ("FONTSIZE", (0, 0), (-1, -1), TAMANO_FUENTE_TABLA),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return tabla
+
+
+def _tabla_resultado(r: ResultadoNecesidad) -> Table:
+    """Las filas de la consulta de referencia, tal cual (hasta
+    `FILAS_TABLA_RESULTADO_MAX`)."""
+    filas = next(iter(r.tablas.values()), [])
+    if not filas:
+        return Table([["(la consulta no devolvió filas)"]], colWidths=[ANCHO_CONTENIDO])
+    columnas = columnas_ordenadas(r.id, filas)
+    datos = [columnas] + [[Paragraph(_escapar_xml(_fmt_valor(f[c], "")), ESTILO_NOTA) for c in columnas]
+                          for f in filas[:FILAS_TABLA_RESULTADO_MAX]]
+    tabla = Table(datos, colWidths=[ANCHO_CONTENIDO / len(columnas)] * len(columnas))
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COLOR_FONDO_TABLA_HEADER),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), TAMANO_FUENTE_TABLA),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     return tabla
 
@@ -552,18 +356,22 @@ def _seccion_necesidad(r: ResultadoNecesidad) -> list:
         story.append(Paragraph("<b>Filtros:</b> " + _escapar_xml("; ".join(r.universo.filtros)), ESTILO_NOTA))
     story.append(Spacer(1, TAMANO_FUENTE_NOTA))
 
-    for titulo_grafico, fig, ancho_cm in GRAFICOS_PDF[r.id](r):
-        story.append(Paragraph(titulo_grafico, ESTILO_H2))
-        story.append(_figura_a_imagen(fig, ancho_cm))
+    story.append(Paragraph("Respuesta", ESTILO_H2))
+    for h in r.hallazgos:
+        story.append(Paragraph(f"• {_escapar_xml(h)}", ESTILO_NORMAL))
+    story.append(Spacer(1, TAMANO_FUENTE_NOTA))
+
+    fig = _fig_barras(r)
+    if fig is not None:
+        story.append(_figura_a_imagen(fig, ANCHO_IMAGEN_GRANDE_CM))
         story.append(Spacer(1, TAMANO_FUENTE_NOTA))
 
     story.append(Paragraph("Valores clave", ESTILO_H2))
     story.append(_tabla_valores_clave(r))
     story.append(Spacer(1, TAMANO_FUENTE_NOTA))
 
-    story.append(Paragraph("Hallazgos", ESTILO_H2))
-    for h in r.hallazgos:
-        story.append(Paragraph(f"• {_escapar_xml(h)}", ESTILO_NORMAL))
+    story.append(Paragraph("Resultado crudo de la consulta", ESTILO_H2))
+    story.append(_tabla_resultado(r))
     story.append(Spacer(1, TAMANO_FUENTE_NOTA))
 
     story.append(Paragraph("Limitaciones", ESTILO_H2))
@@ -720,16 +528,14 @@ def pdf_vigente(
     ruta_pdf: Path,
     *,
     db_path: Path | None = None,
-    agg_path: Path | None = None,
     out_dir: Path | None = None,
 ) -> bool:
-    """True si el PDF ya existe y la huella_bd de las 11 necesidades EN
+    """True si el PDF ya existe y la huella_bd de las 10 necesidades EN
     CACHÉ coincide con la que tenía cuando se generó ese PDF (no recalcula
     nada: usa `cargar_necesidad`, que sirve de `data/referencia/*.json` si
     ya está vigente). `None` se resuelve en la llamada, mismo motivo que en
     `generar_pdf`."""
     db_path = db_path if db_path is not None else DB_PATH_DEFAULT
-    agg_path = agg_path if agg_path is not None else AGG_PATH_DEFAULT
     out_dir = out_dir if out_dir is not None else OUT_DIR_DEFAULT
     if not ruta_pdf.exists():
         return False
@@ -740,7 +546,7 @@ def pdf_vigente(
     con = abrir_conexion(db_path)
     try:
         for nid in NECESIDADES_ORDEN:
-            carga = servicio.cargar_necesidad(nid, db_path=db_path, agg_path=agg_path, out_dir=out_dir, con=con)
+            carga = servicio.cargar_necesidad(nid, db_path=db_path, out_dir=out_dir, con=con)
             actual = _huella_bd_a_dict(carga.resultado)
             guardada = metadato.get("huella_por_necesidad", {}).get(nid)
             if guardada != actual:
@@ -766,14 +572,13 @@ class ResumenPDF:
 def generar_pdf(
     *,
     db_path: Path | None = None,
-    agg_path: Path | None = None,
     out_dir: Path | None = None,
     out_pdf: Path | None = None,
     raw_dir: Path | None = None,
     forzar: bool = False,
     necesidades_md: Path | None = None,
 ) -> ResumenPDF:
-    """Arma el PDF completo. `forzar=True` recalcula las 11 necesidades
+    """Arma el PDF completo. `forzar=True` recalcula las 10 necesidades
     antes de armar el documento (mismo mecanismo que el botón "Actualizar
     datos" del dashboard); sin `forzar`, cada necesidad se sirve de caché
     si ya está vigente y solo se recalcula la que falte o esté rancia
@@ -786,7 +591,6 @@ def generar_pdf(
     parcheada, sin depender de un default ya congelado al definir la
     función)."""
     db_path = db_path if db_path is not None else DB_PATH_DEFAULT
-    agg_path = agg_path if agg_path is not None else AGG_PATH_DEFAULT
     out_dir = out_dir if out_dir is not None else OUT_DIR_DEFAULT
     out_pdf = out_pdf if out_pdf is not None else OUT_PDF_DEFAULT
     raw_dir = raw_dir if raw_dir is not None else RAW_DIR_DEFAULT
@@ -794,13 +598,13 @@ def generar_pdf(
     t_inicio = time.perf_counter()
 
     if forzar:
-        servicio.refrescar_todas(forzar=True, db_path=db_path, agg_path=agg_path, out_dir=out_dir)
+        servicio.refrescar_todas(forzar=True, db_path=db_path, out_dir=out_dir)
 
     con = abrir_conexion(db_path)
     try:
         resultados: dict[str, ResultadoNecesidad] = {}
         for nid in NECESIDADES_ORDEN:
-            carga = servicio.cargar_necesidad(nid, db_path=db_path, agg_path=agg_path, out_dir=out_dir, con=con)
+            carga = servicio.cargar_necesidad(nid, db_path=db_path, out_dir=out_dir, con=con)
             resultados[nid] = carga.resultado
         ficha = construir_ficha(con, db_path, raw_dir)
     finally:
@@ -843,14 +647,13 @@ def generar_pdf(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.pdf.generador")
     parser.add_argument("--db", default=str(DB_PATH_DEFAULT))
-    parser.add_argument("--agg", default=str(AGG_PATH_DEFAULT))
     parser.add_argument("--out", default=str(OUT_PDF_DEFAULT))
     parser.add_argument("--raw", default=str(RAW_DIR_DEFAULT))
     parser.add_argument("--forzar", action="store_true")
     args = parser.parse_args(argv)
 
     resumen = generar_pdf(
-        db_path=Path(args.db), agg_path=Path(args.agg), out_pdf=Path(args.out),
+        db_path=Path(args.db), out_pdf=Path(args.out),
         raw_dir=Path(args.raw), forzar=args.forzar,
     )
     print(f"PDF escrito en {resumen.ruta} ({resumen.tamano_bytes / BYTES_POR_KB:,.0f} KB) en {resumen.duracion_s:.2f}s")

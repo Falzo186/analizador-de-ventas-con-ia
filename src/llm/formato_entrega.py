@@ -7,8 +7,10 @@ reintento y validación de cifras que el chat), solo cambia la forma de la
 salida. Tampoco compara contra la referencia determinista (fuera de alcance):
 es formato de entrega, no evaluación de exactitud.
 
-La pregunta NO se reescribe a mano: es la constante `PREGUNTA` del módulo de
-`src.analytics`, la misma que cada `calcular()` pone en `r.pregunta`.
+La pregunta NO se reescribe a mano: es la `pregunta` de la definición de la
+necesidad (`src.analytics.necesidades.DEFINICIONES`), la misma que
+`calcular()` pone en `r.pregunta`. Fase 24: la entrega cubre las 10
+necesidades nuevas (antes, 5 de las 11 viejas).
 
 Estructura fija de cada JSON (`CAMPOS_ENTREGA`, en este orden):
 
@@ -20,7 +22,7 @@ Solo se empaqueta una respuesta completa (`res.ok`). Si el pipeline falla
 error, igual que el chat.
 
 CLI (modelo real):
-  python -m src.llm.formato_entrega N1 --modelo qwen2.5-coder:1.5b
+  python -m src.llm.formato_entrega N1 --modelo llama3.1:8b
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from src.analytics import n1_recompra, n2_canasta, n4_frecuencia, n9_tamano, n11_prediccion
+from src.analytics.necesidades import DEFINICIONES
 from src.dashboard.servicio import NECESIDADES_ENTREGA
 from src.llm import client
 from src.llm import responder_instacart as ri
@@ -42,10 +44,8 @@ CAMPOS_ENTREGA: tuple[str, ...] = (
     "necesidad", "pregunta", "sql_generado", "resultado", "respuesta_llm", "modelo", "timestamp",
 )
 
-#: Pregunta fija de cada necesidad seleccionada, importada de src.analytics.
-PREGUNTAS_ENTREGA: dict[str, str] = {
-    m.ID: m.PREGUNTA for m in (n1_recompra, n2_canasta, n4_frecuencia, n9_tamano, n11_prediccion)
-}
+#: Pregunta fija de cada necesidad de la entrega, tomada de src.analytics.
+PREGUNTAS_ENTREGA: dict[str, str] = {nid: DEFINICIONES[nid].pregunta for nid in NECESIDADES_ENTREGA}
 assert tuple(PREGUNTAS_ENTREGA) == NECESIDADES_ENTREGA
 
 

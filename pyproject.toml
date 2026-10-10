@@ -1,7 +1,7 @@
 [project]
 name = "ventia"
 version = "0.1.0"
-description = "Chat con IA local + dashboard de 11 necesidades analíticas sobre el dataset Instacart 2017"
+description = "Chat con IA local + dashboard de 10 necesidades analíticas sobre el dataset Instacart 2017"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]

@@ -46,9 +46,25 @@ Fase 23:
 - Export legible para pegar en otra conversación: `a_texto`,
   `exportar_texto`, `exportar_json`.
 
+Fase 24 (10 necesidades de una sola consulta; retroalimentación sin fuga):
+- La referencia que ve el juez es la de `src.analytics.necesidades`: SQL de
+  referencia + su resultado crudo + la redacción (`texto_referencia`). El
+  juez ve además el SQL y el resultado del intento, no solo la redacción.
+- El juez devuelve DOS textos: `comparacion` (puede citar la referencia; se
+  guarda como `justificacion` y NUNCA se pasa al modelo) y
+  `diagnostico_enfoque` (qué está mal del enfoque; es lo único del juez que
+  recibe el siguiente intento, saneado con `retroalimentacion.sanear`).
+- La retroalimentación ya NO incluye las filas del resultado anterior ni la
+  redacción anterior: solo el SQL, el error exacto de DuckDB (completo, con
+  sus "Candidate bindings") o la forma del resultado (filas y columnas), el
+  chequeo de forma determinista, el veredicto y el diagnóstico saneado. Ver
+  `texto_retroalimentacion`.
+- `coincide_referencia`: comparación determinista resultado-vs-referencia,
+  solo informativa (contrasta al juez-LLM); no se pasa al modelo.
+
 CLI (modelos reales):
   python -m src.llm.iteraciones_juez N3 --iteraciones 5 --modo autocorreccion \\
-      --pequeno qwen2.5-coder:1.5b --grande qwen2.5-coder:14b --timeout 300 --out docs/evidencia/fase23
+      --pequeno llama3.1:8b --grande - --timeout 300 --out docs/evidencia/fase24
 """
 
 from __future__ import annotations
@@ -65,10 +81,11 @@ from datetime import datetime
 from pathlib import Path
 
 from src.analytics.contrato import ResultadoNecesidad
-from src.analytics.registro import NECESIDADES
+from src.analytics.necesidades import DEFINICIONES, columnas_ordenadas
 from src.dashboard import servicio
 from src.llm import client
 from src.llm import responder_instacart as ri
+from src.llm import retroalimentacion as rf
 from src.llm.prompts_instacart import VEREDICTOS_JUEZ, prompt_juez_instacart
 
 #: Temperatura de las N corridas del pipeline (solo este modo de prueba).
@@ -95,10 +112,11 @@ ORIGEN_AUTOMATICO = "automatico"      # el pipeline falló: no hay respuesta que
 ORIGEN_JUEZ_INVALIDO = "juez_invalido"  # el juez respondió algo que no es un veredicto
 ORIGEN_JUEZ_ERROR = "juez_error"      # la llamada al juez falló (timeout, Ollama caído)
 
-#: Pregunta fija de cada necesidad, tal cual la constante `PREGUNTA` de su módulo.
-PREGUNTAS: dict[str, str] = {
-    nid: sys.modules[fn.__module__].PREGUNTA for nid, fn in NECESIDADES.items()
-}
+#: Pregunta fija de cada necesidad, tal cual la `pregunta` de su definición.
+PREGUNTAS: dict[str, str] = {nid: d.pregunta for nid, d in DEFINICIONES.items()}
+
+#: Filas del resultado de referencia que ve el juez (contexto de 4,096 tokens).
+FILAS_REFERENCIA_JUEZ = 10
 
 
 # ---------------------------------------------------------------------------
@@ -115,15 +133,25 @@ def _fmt(valor: object) -> str:
     return json.dumps(valor, ensure_ascii=False) if isinstance(valor, (list, dict)) else str(valor)
 
 
+def _filas_referencia(r: ResultadoNecesidad) -> list[dict]:
+    return next(iter(r.tablas.values()), [])
+
+
 def texto_referencia(r: ResultadoNecesidad) -> str:
-    """Respuesta de referencia que ve el juez: los `hallazgos` y los
-    `valores_clave` del resultado determinista, sin reescribirlos. No se
-    pasan las tablas completas: ocuparían miles de tokens del contexto de
-    4,096 con el que Ollama carga los modelos."""
-    lineas = ["Hallazgos:"]
+    """Respuesta de referencia que ve el juez (Fase 24): el SQL de
+    referencia, su resultado crudo (hasta `FILAS_REFERENCIA_JUEZ` filas), la
+    redacción (`hallazgos`) y los `valores_clave`, sin reescribirlos."""
+    filas = _filas_referencia(r)
+    columnas = columnas_ordenadas(r.id, filas)
+    sql = " ".join(" ".join(c.sql.split()) for c in r.consultas)
+    lineas = [f"SQL de referencia: {sql}"]
+    lineas.append("Resultado de referencia:")
+    lineas.append(_tabla_texto(columnas, [[f[c] for c in columnas] for f in filas], len(filas), FILAS_REFERENCIA_JUEZ))
+    lineas.append("Respuesta de referencia:")
     lineas += [f"- {h}" for h in r.hallazgos]
     lineas.append("Valores clave:")
-    lineas += [f"- {v.etiqueta}: {_fmt(v.valor)} ({v.unidad})" for v in r.valores_clave]
+    # Las listas (top 10 de nombres) ya están en el resultado: repetirlas solo gasta contexto.
+    lineas += [f"- {v.etiqueta}: {_fmt(v.valor)} ({v.unidad})" for v in r.valores_clave if not isinstance(v.valor, list)]
     return "\n".join(lineas)
 
 
@@ -139,10 +167,14 @@ def referencia_de(necesidad: str) -> str:
 @dataclass
 class Veredicto:
     veredicto: str
+    #: Fase 24: la "comparacion" del juez contra la referencia (puede citar
+    #: valores de la referencia; nunca se pasa al modelo).
     justificacion: str
     origen: str
     #: Texto crudo que devolvió el juez (None si no se le llamó).
     crudo: str | None = None
+    #: Fase 24: "diagnostico_enfoque" del juez, crudo (antes de sanearlo).
+    diagnostico: str | None = None
 
 
 def _sin_acentos(texto: str) -> str:
@@ -183,13 +215,21 @@ def parsear_veredicto(crudo: str) -> Veredicto:
     if veredicto is None:
         return Veredicto(SIN_VEREDICTO, f"El juez no devolvió un veredicto válido: {crudo!r}",
                          ORIGEN_JUEZ_INVALIDO, crudo)
-    justificacion = datos.get("justificacion") or datos.get("justificación") or ""
-    return Veredicto(veredicto, str(justificacion).strip(), ORIGEN_JUEZ, crudo)
+    justificacion = (datos.get("comparacion") or datos.get("comparación") or datos.get("justificacion")
+                     or datos.get("justificación") or "")
+    diagnostico = datos.get("diagnostico_enfoque") or datos.get("diagnóstico_enfoque")
+    return Veredicto(veredicto, str(justificacion).strip(), ORIGEN_JUEZ, crudo,
+                     str(diagnostico).strip() if diagnostico else None)
 
 
-def juzgar(pregunta: str, referencia: str, respuesta: str, *, modelo: str, timeout_s: float) -> Veredicto:
-    """Pide al `modelo` el veredicto (temperatura 0.0, salida JSON)."""
-    sistema, usuario = prompt_juez_instacart(pregunta, referencia, respuesta)
+def juzgar(
+    pregunta: str, referencia: str, respuesta: str, *, modelo: str, timeout_s: float,
+    sql: str | None = None, resultado: str | None = None,
+) -> Veredicto:
+    """Pide al `modelo` el veredicto (temperatura 0.0, salida JSON). Fase 24:
+    `sql`/`resultado` del intento, para que diagnostique el enfoque."""
+    sistema, usuario = prompt_juez_instacart(pregunta, referencia, respuesta, sql_generado=sql,
+                                             resultado_generado=resultado)
     try:
         crudo = client.chat_con_modelo(
             modelo, sistema, usuario, temperatura=TEMPERATURA_JUEZ, timeout_s=timeout_s, formato_json=True,
@@ -264,6 +304,18 @@ class Iteracion:
     #: Modo autocorrección: texto exacto del intento anterior que recibió
     #: este intento (None en el intento 1 y en modo independiente).
     retroalimentacion: str | None = None
+    #: Fase 24: "diagnostico_enfoque" del juez tal cual lo devolvió...
+    diagnostico: str | None = None
+    #: ...y saneado (sin oraciones que citen la referencia): lo que recibe el
+    #: intento siguiente. `oraciones_omitidas`: cuántas se quitaron.
+    diagnostico_retro: str | None = None
+    oraciones_omitidas: int = 0
+    #: Pistas deterministas sobre la forma del resultado (`rf.chequeo_forma`).
+    chequeo_forma: list[str] = field(default_factory=list)
+    #: Comparación determinista con la referencia (`rf.coincide_con_referencia`).
+    #: Solo informativa: no se pasa al modelo.
+    coincide_referencia: bool | None = None
+    detalle_coincidencia: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -284,6 +336,12 @@ class ResumenModelo:
     parciales: int
     incorrectas: int
     sin_veredicto: int
+    #: Fase 24: intentos cuyo resultado coincide con la referencia (chequeo determinista).
+    coincidencias: int = 0
+    #: Fase 24: primer intento con veredicto "correcta" (None si ninguno):
+    #: en autocorrección, el intento en el que converge.
+    primer_correcto: int | None = None
+    primera_coincidencia: int | None = None
 
     @property
     def pct_correctas(self) -> float:
@@ -306,6 +364,14 @@ class CorridaIteraciones:
     #: corrida que se quedó "en curso" fue interrumpida (y conserva los
     #: intentos que alcanzaron a terminar).
     estado: str = ESTADO_EN_CURSO
+    #: Fase 24: SQL y filas de la consulta de referencia (para el chequeo
+    #: automático y para saber qué valores no pueden fugarse).
+    referencia_sql: str = ""
+    referencia_filas: list[dict] = field(default_factory=list)
+
+    @property
+    def valores_protegidos(self) -> rf.ValoresProtegidos:
+        return rf.valores_protegidos(self.pregunta, self.referencia_filas)
 
     @property
     def total_esperado(self) -> int:
@@ -326,8 +392,12 @@ class CorridaIteraciones:
         for modelo in self.modelos:
             its = self.de_modelo(modelo)
             cuenta = {v: sum(1 for it in its if it.veredicto == v) for v in (*VEREDICTOS_JUEZ, SIN_VEREDICTO)}
-            out[modelo] = ResumenModelo(modelo, len(its), cuenta[CORRECTA], cuenta[PARCIAL],
-                                        cuenta[INCORRECTA], cuenta[SIN_VEREDICTO])
+            out[modelo] = ResumenModelo(
+                modelo, len(its), cuenta[CORRECTA], cuenta[PARCIAL], cuenta[INCORRECTA], cuenta[SIN_VEREDICTO],
+                coincidencias=sum(1 for it in its if it.coincide_referencia),
+                primer_correcto=next((it.numero for it in its if it.veredicto == CORRECTA), None),
+                primera_coincidencia=next((it.numero for it in its if it.coincide_referencia), None),
+            )
         return out
 
     def a_dict(self) -> dict:
@@ -335,6 +405,8 @@ class CorridaIteraciones:
             "necesidad": self.necesidad,
             "pregunta": self.pregunta,
             "referencia": self.referencia,
+            "referencia_sql": self.referencia_sql,
+            "referencia_filas": self.referencia_filas,
             "modo": self.modo,
             "modelos": self.modelos,
             "n_iteraciones": self.n_iteraciones,
@@ -362,27 +434,53 @@ def _tabla_texto(columnas: list[str] | None, filas: list[list] | None, n_filas: 
     return "\n".join(lineas)
 
 
-def texto_retroalimentacion(it: Iteracion) -> str:
+def diagnostico_para_retro(diagnostico: str | None, vp: rf.ValoresProtegidos) -> tuple[str, int]:
+    """El diagnóstico del juez, sin las oraciones que citan la referencia."""
+    return rf.sanear(diagnostico, vp)
+
+
+def texto_retroalimentacion(it: Iteracion, vp: rf.ValoresProtegidos | None = None) -> str:
     """Lo que el intento siguiente recibe del intento `it` en modo
-    autocorrección: su SQL, el error o el resultado (primeras filas), la
-    redacción y el veredicto del juez con su justificación. Se agrega al
-    mensaje de usuario de la llamada de SQL y de la primera redacción
-    (`prompts_instacart._con_retroalimentacion`)."""
+    autocorrección. Se agrega al mensaje de usuario de la llamada de SQL y de
+    la primera redacción (`prompts_instacart._con_retroalimentacion`).
+
+    Fase 24 — qué se pasa y qué NO:
+    - SÍ: el SQL que generó (y el rechazado con su motivo, si hubo reintento);
+      si falló, el error TAL CUAL (el de DuckDB trae "Candidate bindings" con
+      los nombres de columna correctos); si ejecutó, la FORMA del resultado
+      (cuántas filas, qué columnas); el chequeo de forma determinista; el
+      veredicto; y el diagnóstico del enfoque del juez, saneado con `vp`.
+    - NO: la "comparacion" del juez (cita la referencia), las filas del
+      resultado anterior ni la redacción anterior. Las filas y la redacción
+      son del propio modelo, pero (1) si ya coincidían con la referencia,
+      repetirlas es darle la respuesta, y enmascarar solo las que coinciden
+      le diría cuáles son las correctas; (2) en la Fase 23 el 1.5b copió
+      literalmente su redacción anterior en vez de corregirse."""
     lineas = [
         f"INTENTO ANTERIOR DE ESTA MISMA PREGUNTA (intento {it.numero} de {it.total}). "
-        "Un evaluador lo comparó con la respuesta correcta.",
+        "Un evaluador lo comparó con la respuesta correcta, que no se te muestra.",
     ]
     if it.sql_rechazado:
         lineas.append(f"Tu primer SQL fue rechazado: {' '.join(it.sql_rechazado.split())}")
-        lineas.append(f"Motivo del rechazo: {it.motivo_reintento}")
+        lineas.append(f"Motivo del rechazo (mensaje exacto): {it.motivo_reintento}")
     lineas.append(f"SQL que generaste: {' '.join(it.sql.split()) if it.sql else '(no se generó SQL válido)'}")
     if it.error:
-        lineas.append(f"Error: {it.error}")
+        lineas.append(f"Error (mensaje exacto): {it.error}")
     else:
-        lineas.append(f"Resultado que dio esa consulta:\n"
-                      f"{_tabla_texto(it.columnas, it.filas, it.n_filas, FILAS_RETROALIMENTACION_MAX)}")
-        lineas.append(f"Respuesta que redactaste: {it.respuesta}")
-    lineas.append(f"Veredicto del evaluador: {it.veredicto.upper()}. Motivo: {it.justificacion}")
+        columnas = ", ".join(it.columnas or []) or "(ninguna)"
+        n = it.n_filas if it.n_filas is not None else 0
+        lineas.append(f"Tu consulta se ejecutó y devolvió {rf.texto_n_filas(n)} fila(s) con las columnas: {columnas}.")
+    if it.chequeo_forma:
+        lineas.append("Chequeo automático de forma: " + " ".join(it.chequeo_forma))
+    lineas.append(f"Veredicto del evaluador: {it.veredicto.upper()}.")
+    if it.diagnostico_retro is not None:
+        diagnostico = it.diagnostico_retro
+    elif vp is not None:
+        diagnostico, _ = diagnostico_para_retro(it.diagnostico, vp)
+    else:
+        diagnostico = ""
+    if diagnostico:
+        lineas.append(f"Qué está mal en el enfoque, según el evaluador: {diagnostico}")
     return "\n".join(lineas)
 
 
@@ -398,9 +496,12 @@ def correr_iteracion(
     timeout_respuesta_llm_s: float = ri.TIMEOUT_LLM_RESPUESTA_S,
     timeout_juez_s: float | None = None,
     db_path: Path | None = None,
+    referencia_filas: list[dict] | None = None,
 ) -> Iteracion:
     """Una iteración: pipeline completo (temperatura 0.5) + juez (0.0).
-    `retroalimentacion`: intento anterior (modo autocorrección)."""
+    `retroalimentacion`: intento anterior (modo autocorrección).
+    `referencia_filas`: resultado de la consulta de referencia (Fase 24:
+    chequeo automático y valores que no pueden pasar al siguiente intento)."""
     pregunta = PREGUNTAS[necesidad]
     t0 = time.perf_counter()
     res = ri.responder_pregunta_instacart(
@@ -416,13 +517,19 @@ def correr_iteracion(
     t1 = time.perf_counter()
     if res.ok:
         v = juzgar(pregunta, referencia, res.respuesta or "", modelo=modelo,
-                   timeout_s=timeout_juez_s if timeout_juez_s is not None else timeout_respuesta_llm_s)
+                   timeout_s=timeout_juez_s if timeout_juez_s is not None else timeout_respuesta_llm_s,
+                   sql=res.sql, resultado=_tabla_texto(res.columnas, res.filas, len(res.filas or []),
+                                                       FILAS_RETROALIMENTACION_MAX))
     else:
         v = Veredicto(INCORRECTA, f"El pipeline no produjo respuesta: {res.error}", ORIGEN_AUTOMATICO)
     t2 = time.perf_counter()
     filas = None if res.filas is None else [
         [_valor_json(x) for x in fila] for fila in res.filas[:FILAS_REGISTRADAS_MAX]
     ]
+    referencia_filas = referencia_filas or []
+    diagnostico_retro, omitidas = diagnostico_para_retro(v.diagnostico, rf.valores_protegidos(pregunta, referencia_filas))
+    coincide, detalle = (rf.coincide_con_referencia(necesidad, referencia_filas, res.filas) if referencia_filas
+                         else (None, None))
     return Iteracion(
         modelo=modelo, numero=numero, sql=res.sql, respuesta=res.respuesta, error=res.error,
         intentos_sql=res.intentos, origen_respuesta=res.origen_respuesta,
@@ -432,6 +539,10 @@ def correr_iteracion(
         columnas=res.columnas, filas=filas, n_filas=None if res.filas is None else len(res.filas),
         primera_redaccion=res.primera_redaccion, segunda_redaccion=res.segunda_redaccion,
         cifras_rechazadas=list(res.cifras_rechazadas), retroalimentacion=retroalimentacion,
+        diagnostico=v.diagnostico, diagnostico_retro=diagnostico_retro, oraciones_omitidas=omitidas,
+        chequeo_forma=rf.chequeo_error(res.error) + rf.chequeo_forma(
+            necesidad, res.columnas, res.filas, None if res.filas is None else len(res.filas)),
+        coincide_referencia=coincide, detalle_coincidencia=detalle,
     )
 
 
@@ -448,11 +559,14 @@ def nueva_corrida(
         raise ValueError(f"n debe estar entre {ITERACIONES_MIN} y {ITERACIONES_MAX}, no {n}")
     if modo not in MODOS:
         raise ValueError(f"modo debe ser uno de {MODOS}, no {modo!r}")
+    r = servicio.cargar_necesidad(necesidad).resultado
     return CorridaIteraciones(
-        necesidad=necesidad, pregunta=PREGUNTAS[necesidad], referencia=referencia_de(necesidad),
+        necesidad=necesidad, pregunta=PREGUNTAS[necesidad], referencia=texto_referencia(r),
         modelos=list(dict.fromkeys(modelos)),  # sin repetidos, en orden
         n_iteraciones=n, modo=modo,
         timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
+        referencia_sql="\n".join(c.sql for c in r.consultas),
+        referencia_filas=[{k: _valor_json(v) for k, v in f.items()} for f in _filas_referencia(r)],
     )
 
 
@@ -484,18 +598,19 @@ def correr_iteraciones(
     if corrida is None:
         corrida = nueva_corrida(necesidad, modelos=modelos, n=n, modo=modo)
     total = corrida.total_esperado
+    vp = corrida.valores_protegidos
     for modelo in corrida.modelos:
         anterior: Iteracion | None = None
         for i in range(1, corrida.n_iteraciones + 1):
             if al_iniciar is not None:
                 al_iniciar(modelo, i, len(corrida.iteraciones), total)
-            retro = (texto_retroalimentacion(anterior)
+            retro = (texto_retroalimentacion(anterior, vp)
                      if corrida.modo == MODO_AUTOCORRECCION and anterior is not None else None)
             it = correr_iteracion(
                 corrida.necesidad, corrida.referencia, modelo, i, total=corrida.n_iteraciones,
                 retroalimentacion=retro,
                 timeout_sql_llm_s=timeout_sql_llm_s, timeout_respuesta_llm_s=timeout_respuesta_llm_s,
-                timeout_juez_s=timeout_juez_s, db_path=db_path,
+                timeout_juez_s=timeout_juez_s, db_path=db_path, referencia_filas=corrida.referencia_filas,
             )
             corrida.iteraciones.append(it)
             anterior = it
@@ -526,10 +641,20 @@ NOMBRE_EXPORT_TODAS_TEXTO = "todas_iteraciones_juez.txt"
 
 _DESCRIPCION_MODO = {
     MODO_INDEPENDIENTE: "independiente: cada intento desde cero (mide estabilidad/variabilidad)",
-    MODO_AUTOCORRECCION: ("autocorrección: desde el intento 2, cada intento recibió el SQL, el resultado o "
-                          "error, la redacción y el veredicto del intento anterior del mismo modelo (mide "
-                          "si converge a la respuesta correcta)"),
+    MODO_AUTOCORRECCION: ("autocorrección: desde el intento 2, cada intento recibió del anterior (mismo modelo) "
+                          "su SQL, el error exacto o la forma del resultado, el chequeo de forma, el veredicto y "
+                          "el diagnóstico del enfoque saneado, nunca valores de la referencia (mide si converge "
+                          "a la respuesta correcta)"),
 }
+
+
+def _resumen_texto(r: ResumenModelo) -> str:
+    conv = f"primer «correcta» en el intento {r.primer_correcto}" if r.primer_correcto else "ningún «correcta»"
+    coin = (f"primera coincidencia en el intento {r.primera_coincidencia}" if r.primera_coincidencia
+            else "ninguna coincidencia")
+    return (f"{r.modelo}: {r.correctas}/{r.n} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
+            f"{r.sin_veredicto} sin veredicto · {conv} · chequeo automático: {r.coincidencias}/{r.n} coinciden "
+            f"con la referencia ({coin})")
 
 
 def a_texto(corrida: CorridaIteraciones) -> str:
@@ -552,8 +677,7 @@ def a_texto(corrida: CorridaIteraciones) -> str:
         "RESUMEN:",
     ]
     for r in corrida.resumen().values():
-        out.append(f"- {r.modelo}: {r.correctas}/{r.n} correctas · {r.parciales} parciales · "
-                   f"{r.incorrectas} incorrectas · {r.sin_veredicto} sin veredicto")
+        out.append(f"- {_resumen_texto(r)}")
     for it in corrida.iteraciones:
         out += ["", "-" * 78, f"{it.etiqueta.upper()}  →  {it.veredicto.upper()}", "-" * 78]
         if it.retroalimentacion:
@@ -573,8 +697,17 @@ def a_texto(corrida: CorridaIteraciones) -> str:
             if it.segunda_redaccion:
                 out.append(f"Segunda redacción (estricta): {it.segunda_redaccion}")
             out.append(f"Respuesta final [origen: {it.origen_respuesta}]: {it.respuesta}")
+        if it.chequeo_forma:
+            out.append(f"Chequeo automático de forma: {' '.join(it.chequeo_forma)}")
         out.append(f"Veredicto del juez: {it.veredicto} [origen: {it.origen_veredicto}]")
-        out.append(f"Justificación: {it.justificacion}")
+        out.append(f"Comparación con la referencia (NO se pasa al modelo): {it.justificacion}")
+        out.append(f"Diagnóstico del enfoque (crudo): {it.diagnostico}")
+        if it.oraciones_omitidas:
+            out.append(f"  -> {it.oraciones_omitidas} oración(es) omitida(s) por citar la referencia; "
+                       f"pasa al siguiente intento: {it.diagnostico_retro}")
+        if it.coincide_referencia is not None:
+            out.append(f"Chequeo automático vs. referencia: {'COINCIDE' if it.coincide_referencia else 'NO coincide'} "
+                       f"({it.detalle_coincidencia})")
         out.append(f"Duración: pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_s:.1f} s")
     return "\n".join(out) + "\n"
 
@@ -607,8 +740,14 @@ def _imprimir_iteracion(it: Iteracion, hechas: int, total: int) -> None:
         if it.origen_respuesta != "modelo":
             print(f"1.ª redacción: {it.primera_redaccion}  [cifras rechazadas: {', '.join(it.cifras_rechazadas)}]")
     print(f"Respuesta:  {it.respuesta}" + (f"  [redacción: {it.origen_respuesta}]" if it.origen_respuesta else ""))
+    if it.chequeo_forma:
+        print(f"Forma:      {' '.join(it.chequeo_forma)}")
     print(f"Veredicto:  {it.veredicto.upper()}  [origen: {it.origen_veredicto}]")
     print(f"Juez:       {it.justificacion}")
+    print(f"Diagnóst.:  {it.diagnostico}" + (f"  [{it.oraciones_omitidas} oración(es) omitida(s)]"
+                                            if it.oraciones_omitidas else ""))
+    if it.coincide_referencia is not None:
+        print(f"Chequeo:    {'COINCIDE' if it.coincide_referencia else 'NO coincide'} ({it.detalle_coincidencia})")
     sys.stdout.flush()
 
 
@@ -623,7 +762,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("necesidades", nargs="+", metavar="necesidad",
                         choices=[*sorted(PREGUNTAS, key=_orden_nid), "todas"],
-                        help="Una o más necesidades (N1..N11), o «todas»")
+                        help=f"Una o más necesidades ({min(PREGUNTAS, key=_orden_nid)}.."
+                             f"{max(PREGUNTAS, key=_orden_nid)}), o «todas»")
     parser.add_argument("--iteraciones", type=int, default=ITERACIONES_DEFAULT)
     parser.add_argument("--modo", choices=MODOS, default=MODO_DEFAULT)
     parser.add_argument("--pequeno", default=MODELO_PEQUENO_DEFAULT)
@@ -665,8 +805,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n=== Resumen {nid} ({corrida.estado}: {len(corrida.iteraciones)} de "
               f"{corrida.total_esperado} intentos) ===")
         for r in corrida.resumen().values():
-            print(f"{r.modelo}: {r.correctas}/{r.n} correctas ({r.pct_correctas:.0f}%) · "
-                  f"{r.parciales} parciales · {r.incorrectas} incorrectas · {r.sin_veredicto} sin veredicto")
+            print(_resumen_texto(r))
         if salida:
             print(f"Log: {salida / nombre_archivo(nid)} · {salida / nombre_archivo_texto(nid)}")
     return 0

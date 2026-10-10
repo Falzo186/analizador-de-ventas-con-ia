@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from src.analytics.registro import NECESIDADES, NECESITA_AGREGADO
+from src.analytics.registro import NECESIDADES
 from tests.helpers_analytics import construir_fixture, abrir
 
 PATRON_PROHIBIDO = re.compile(r"ingres|dinero|ganancia|precio|revenue|\$|USD|MXN", re.IGNORECASE)
@@ -18,11 +18,11 @@ PATRON_PROHIBIDO = re.compile(r"ingres|dinero|ganancia|precio|revenue|\$|USD|MXN
 @pytest.fixture(scope="module")
 def resultados(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("honestidad")
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     con = abrir(src)
     out = {}
     for nid, fn in NECESIDADES.items():
-        out[nid] = fn(con, agg) if nid in NECESITA_AGREGADO else fn(con)
+        out[nid] = fn(con)
     con.close()
     return out
 

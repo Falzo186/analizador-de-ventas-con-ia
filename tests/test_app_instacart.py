@@ -54,16 +54,15 @@ class ModeloSimulado:
 @pytest.fixture(scope="module")
 def rutas(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("app_instacart")
-    src, agg = construir_fixture(tmp)
-    return src, agg, tmp
+    src = construir_fixture(tmp)
+    return src, tmp
 
 
 @pytest.fixture()
 def app(rutas, monkeypatch):
-    src, agg, tmp = rutas
+    src, tmp = rutas
     for modulo in (servicio, pdf_generador):
         monkeypatch.setattr(modulo, "DB_PATH_DEFAULT", src)
-        monkeypatch.setattr(modulo, "AGG_PATH_DEFAULT", agg)
         monkeypatch.setattr(modulo, "OUT_DIR_DEFAULT", tmp / "referencia")
     monkeypatch.setattr(pdf_generador, "OUT_PDF_DEFAULT", tmp / "pdf" / "reporte.pdf")
     monkeypatch.setattr(ri, "DB_PATH_DEFAULT", src)
@@ -197,7 +196,7 @@ def test_dashboard_sigue_funcionando_dentro_de_la_app(app):
     # Fase 8: antes usaba at.columns[1] (panel derecho de la Fase 6); ahora
     # se entra a la vista de dashboard con el ícono 📊.
     at.button(key="vista_dashboard").click().run()
-    for nid in ("N3", "N9", "N11"):
+    for nid in ("N5", "N9", "N10"):  # Fase 24: con datos en la fixture chica
         at.radio(key="necesidad_sel").set_value(nid).run()
         assert not list(at.exception), f"{nid}: {list(at.exception)}"
         assert any(t.value.startswith(f"{nid} —") for t in at.title)
@@ -322,15 +321,15 @@ def test_iconos_alternan_la_vista_a_todo_el_ancho(app):
 
 def test_fijado_de_la_sidebar_abre_el_dashboard_con_esa_necesidad(app):
     at = app(ModeloSimulado([], []))
-    assert len(at.sidebar.button) == 11
-    assert at.sidebar.button(key="fijado_N3").label == "N3 · Picos de demanda"
+    assert len(at.sidebar.button) == 10
+    assert at.sidebar.button(key="fijado_N3").label == "N3 · Tasa de recompra más alta"
 
     at.sidebar.button(key="fijado_N3").click().run()
 
     assert not list(at.exception)
     assert at.session_state["vista"] == "dashboard"
     assert at.radio(key="necesidad_sel").value == "N3"
-    assert any(t.value == "N3 — Picos de demanda" for t in at.title)
+    assert any(t.value == "N3 — Tasa de recompra más alta" for t in at.title)
     assert at.sidebar.button(key="fijado_N3").proto.type == "primary"
     assert at.sidebar.button(key="fijado_N1").proto.type == "secondary"
 
@@ -371,7 +370,7 @@ def test_sidebar_no_tiene_chats_recientes(app):
     )), "¿Cuántos pedidos hay?")
     textos = [getattr(el, "value", "") or getattr(el, "label", "") for el in at.sidebar]
     etiquetas = [b.label for b in at.sidebar.button]
-    assert etiquetas == [f"N{i} · {app_instacart.TITULOS_NECESIDADES[f'N{i}']}" for i in range(1, 12)]
+    assert etiquetas == [f"N{i} · {app_instacart.TITULOS_NECESIDADES[f'N{i}']}" for i in range(1, 11)]
     for texto in textos:
         assert not any(p in str(texto).lower() for p in ("reciente", "historial", "conversaci", "¿cuántos pedidos"))
 
@@ -473,7 +472,7 @@ def test_hilo_muerto_sin_resultado_o_pregunta_distinta_si_calculan(app):
     assert len(at.session_state["historial"]) == 2
 
 
-@pytest.mark.parametrize("nid", [f"N{i}" for i in range(1, 12)])
+@pytest.mark.parametrize("nid", [f"N{i}" for i in range(1, 11)])
 def test_cada_fijado_navega_ida_y_vuelta(app, nid):
     at = _preguntar(app(ModeloSimulado(
         ["SELECT COUNT(*) AS n FROM orders"], ["Hay 21 pedidos en total."],
@@ -528,7 +527,9 @@ def test_ollama_caido_se_informa_sin_romper_la_app(app, monkeypatch):
     at = app(ModeloSimulado([], []))
     assert not list(at.exception)
     assert any("systemctl status ollama" in e.value for e in at.error)
-    assert not at.selectbox, "sin Ollama no se ofrece ningún modelo"
+    # El único selector que queda es el «Modo de iteración» (Fase 23), que no es un modelo.
+    assert [s.key for s in at.selectbox] == [app_instacart.CLAVE_MODO_ITERACION], \
+        "sin Ollama no se ofrece ningún modelo"
     assert at.chat_input, "el chat sigue en pantalla (sus errores ya son controlados)"
 
 

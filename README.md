@@ -7,11 +7,13 @@ Dataset 2017** (pedidos reales de supermercado en línea):
   español a SQL de solo lectura, la ejecuta contra los datos reales y
   redacta la respuesta en streaming. El SQL queda visible en cada turno y
   el historial se conserva durante la sesión.
-- **Dashboard de 11 necesidades analíticas** (N1-N11: recompra,
-  canasta, picos de demanda, frecuencia, productos ancla, departamentos,
-  evolución, rutinarios/exploradores, tamaño de pedido, impulso y
-  predicción del siguiente pedido), con gráficas, valores clave y la
-  decisión que ayuda a tomar. Incluye un botón para (re)generar un **PDF
+- **Dashboard de 10 necesidades analíticas** (N1-N10, Fase 24), cada una
+  una sola pregunta que se responde con una sola consulta: productos más
+  vendidos, departamento con más pedidos, tasa de recompra más alta y más
+  baja, tamaño promedio del carrito, días entre pedidos, pasillo con más
+  productos y con más unidades, producto que se agrega primero y % de
+  líneas recompradas. Cada panel muestra la respuesta, la gráfica, los
+  valores clave, el SQL de referencia y su resultado crudo. Incluye un botón para (re)generar un **PDF
   determinista, sin IA**: cada cifra sale de una consulta SQL.
 
 **Ficha del dataset** (fuente, licencia, limitaciones, filas y columnas por
@@ -19,7 +21,7 @@ tabla, medidas con consultas reales): [`docs/DATASET_INSTACART.md`](docs/DATASET
 Este README no repite sus cifras: esa ficha es la fuente autorizada.
 
 El encargo completo está en [`docs/BRIEF_INSTACART.md`](docs/BRIEF_INSTACART.md)
-y las definiciones formales de N1-N11 en [`docs/NECESIDADES.md`](docs/NECESIDADES.md).
+y las definiciones formales de N1-N10 en [`docs/NECESIDADES.md`](docs/NECESIDADES.md).
 
 ---
 
@@ -52,15 +54,13 @@ ollama pull qwen2.5-coder:1.5b                    # modelo por defecto del chat
    ```bash
    .venv/bin/python -m src.db.instacart_validacion --db data/instacart.duckdb --raw data/instacart/raw
    ```
-4. Genera las tablas agregadas que usan las necesidades pesadas:
-   ```bash
-   .venv/bin/python -m src.analytics.agregados --db data/instacart.duckdb --out data/instacart_agg.duckdb
-   ```
-5. (Opcional) Precalcula las 11 respuestas de referencia en `data/referencia/`.
+4. (Opcional) Precalcula las 10 respuestas de referencia en `data/referencia/`.
    Si no lo haces, el dashboard las calcula la primera vez y las guarda en
-   caché; también puedes usar su botón "Actualizar datos".
+   caché; también puedes usar su botón "Actualizar datos". Desde la Fase 24
+   ya no hay tablas agregadas (`data/instacart_agg.duckdb` ya no se usa y se
+   puede borrar).
    ```bash
-   .venv/bin/python -m src.analytics --todas --db data/instacart.duckdb --agg data/instacart_agg.duckdb --out-dir data/referencia
+   .venv/bin/python -m src.analytics --todas --db data/instacart.duckdb --out-dir data/referencia
    ```
 
 Todo lo que se genera (`data/*.duckdb`, `data/referencia/`, `data/cache/`,
@@ -80,7 +80,7 @@ responde, el panel ⚙️ lo indica y el chat devuelve errores controlados.
 
 Arriba del área principal hay dos íconos, **💬** (chat) y **📊**
 (dashboard), que alternan qué vista ocupa la pantalla. El activo se ve
-resaltado. La barra lateral lista las 11 necesidades como fijados: un clic
+resaltado. La barra lateral lista las 10 necesidades como fijados: un clic
 abre el dashboard en esa necesidad.
 
 El ícono **⚙️** de la barra, disponible en las dos vistas, abre la
@@ -101,7 +101,7 @@ configuración:
 
 - **Dashboard standalone** (sin chat): `.venv/bin/streamlit run src/ui/dashboard.py`
 - **Chat por línea de comandos**: `.venv/bin/python -m src.llm.responder_instacart "¿Cuántos pedidos hay en total?"`
-- **PDF por línea de comandos**: `.venv/bin/python -m src.pdf.generador` (añade `--forzar` para recalcular las 11 necesidades)
+- **PDF por línea de comandos**: `.venv/bin/python -m src.pdf.generador` (añade `--forzar` para recalcular las 10 necesidades)
 
 ## Variables de entorno
 
@@ -195,18 +195,15 @@ documento enlazado.
   productos.
 
 **De las necesidades** (ver [`docs/NECESIDADES.md`](docs/NECESIDADES.md)):
-- **N4**: `days_since_prior_order` está topado en 30. Una parte de los
-  usuarios "en riesgo" tiene su último intervalo censurado (el real podría
-  ser mayor). Además no existe "hoy": se compara el último intervalo contra
-  el patrón propio del usuario, nunca "días sin comprar hasta hoy".
-- **N11**: el baseline (frecuencia + recencia, sin ML) tiene un **techo**:
-  solo puede acertar productos que ya estaban en el historial del usuario.
-  El hit-rate se reporta junto con ese techo.
-- **N5 y N10**: el orden de agregado al carrito puede reflejar la
-  **interfaz** de Instacart (p. ej. listas de "comprar de nuevo" primero),
-  no una preferencia. "Producto ancla" e "impulso" son hipótesis, no hechos.
-- **N7 y N9** son descriptivas, no causales.
-- N2 (lift) favorece pares raros; se exige un soporte mínimo documentado.
+- **N1 y N8**: no hay columna de cantidad; una unidad = una línea de pedido.
+- **N2**: "pedidos" = pedidos distintos con al menos un producto del
+  departamento (`COUNT(DISTINCT order_id)`), no líneas.
+- **N6**: `days_since_prior_order` está topado en 30, así que el promedio
+  real es mayor que el reportado.
+- **N7**: el primer lugar es el pasillo comodín `missing` (productos sin
+  pasillo); el panel nombra también el primer pasillo real.
+- **N9**: el orden de agregado al carrito puede reflejar la **interfaz** de
+  Instacart (p. ej. "comprar de nuevo" primero), no una preferencia.
 
 **Del chat** (ver [Fase 5](docs/FASE5_REPORTE.md) y [Fase 6](docs/FASE6_REPORTE.md)):
 - Corrección semántica no garantizada (sección anterior).
@@ -237,8 +234,9 @@ documento enlazado.
 
 **Del rendimiento** (ver [Fase 1](docs/FASE1_REPORTE.md) y [Fase 3](docs/FASE3_REPORTE.md)):
 - Los paneles se sirven desde caché (`data/referencia/`, invalidada por la
-  huella de la base). Recalcular N10 y N11 tarda varios segundos y solo
-  ocurre con "Actualizar datos", nunca al cambiar de panel.
+  huella de la base y por la definición de la necesidad). Recalcular la
+  más lenta (N2) tarda ~5 s y solo ocurre con "Actualizar datos", nunca al
+  cambiar de panel.
 
 ---
 
@@ -250,14 +248,17 @@ documento enlazado.
 | 1 | Capa de datos: carga de los 6 CSV a DuckDB con esquema explícito, validación y ficha del dataset | `2657cc4` | [`FASE1_REPORTE.md`](docs/FASE1_REPORTE.md) |
 | 2A | Contrato analítico (`ResultadoNecesidad`) y necesidades N1-N6 | `e383f1e` | [`FASE2A_REPORTE.md`](docs/FASE2A_REPORTE.md) |
 | 2B | Correcciones de la 2A y necesidades N7-N11 | `109eee9` | [`FASE2B_REPORTE.md`](docs/FASE2B_REPORTE.md) |
-| 3 | Dashboard de 11 paneles con caché y prueba de concurrencia con Ollama | `6909ee9` | [`FASE3_REPORTE.md`](docs/FASE3_REPORTE.md) |
+| 3 | Dashboard de 11 paneles (hoy 10) con caché y prueba de concurrencia con Ollama | `6909ee9` | [`FASE3_REPORTE.md`](docs/FASE3_REPORTE.md) |
 | 4 | PDF determinista sin IA, integrado al dashboard | `fb3a697` | [`FASE4_REPORTE.md`](docs/FASE4_REPORTE.md) |
 | 5 | IA local sobre Instacart: esquema leído de la base, guardas reales, reintento, benchmark de 3 modelos y modelo por defecto `qwen2.5-coder:1.5b` | `f7ccb28` | [`FASE5_REPORTE.md`](docs/FASE5_REPORTE.md) |
 | 6 | App de dos paneles, chat con streaming e historial, validación de cifras | `a92c9db` | [`FASE6_REPORTE.md`](docs/FASE6_REPORTE.md) |
 | 7 | Retiro de Northwind y del simulador a `legacy/`, limpieza de dependencias y este README | `57d3a86` | [`FASE7_REPORTE.md`](docs/FASE7_REPORTE.md) |
 | 8 | Interfaz de vista alternante estilo Claude.ai: íconos 💬/📊 y necesidades fijadas en la barra lateral | `a88911d` | [`FASE8_REPORTE.md`](docs/FASE8_REPORTE.md) |
 | — | Hotfix 1: un cambio de vista ya no repite la fase SQL en curso; regla de `eval_set` del prompt | `57b58e6` | [`HOTFIX1_REPORTE.md`](docs/HOTFIX1_REPORTE.md) |
-| 9 | Selector de modelo y de esfuerzo (timeout), estado y liberación de memoria de Ollama | ver `git log` | [`FASE9_REPORTE.md`](docs/FASE9_REPORTE.md) |
+| 9 | Selector de modelo y de esfuerzo (timeout), estado y liberación de memoria de Ollama | `d681701` | [`FASE9_REPORTE.md`](docs/FASE9_REPORTE.md) |
+| 10 | Entregable del curso: JSON individual por necesidad, del software y de la IA local | `c27e4ff` | [`FASE10_REPORTE.md`](docs/FASE10_REPORTE.md) |
+| 11-23 | Iteraciones con juez IA, panel por intento, autocorrección encadenada | `6079467` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) |
+| 24 | Las 11 necesidades se reemplazan por 10 de una sola consulta; retroalimentación entre intentos sin fuga de la respuesta; pruebas con 8B/7B | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md), «Fase 24» |
 
 El código de la etapa anterior (chat sobre Northwind, simulador de ventas
 sintéticas y evaluador del banco de Northwind) está archivado en

@@ -18,7 +18,6 @@ import pytest
 from streamlit.runtime.memory_media_file_storage import _calculate_file_id
 from streamlit.testing.v1 import AppTest
 
-from src.analytics.registro import NECESIDADES
 from src.dashboard import servicio
 from src.llm import client
 from src.llm import formato_entrega as fe
@@ -28,8 +27,8 @@ from src.ui import app_instacart
 from tests.helpers_analytics import construir_fixture
 from tests.test_app_instacart import ModeloSimulado
 
-ENTREGA = ("N1", "N2", "N4", "N9", "N11")
-OTRAS = sorted(set(NECESIDADES) - set(ENTREGA))
+#: Fase 24: la entrega cubre las 10 necesidades (antes, N1, N2, N4, N9 y N11 de las 11 viejas).
+ENTREGA = tuple(f"N{i}" for i in range(1, 11))
 MIME_JSON = "application/json"
 
 
@@ -44,16 +43,15 @@ def _descargas(at: AppTest) -> list:
 @pytest.fixture(scope="module")
 def rutas(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("fase10")
-    src, agg = construir_fixture(tmp)
-    return src, agg, tmp
+    src = construir_fixture(tmp)
+    return src, tmp
 
 
 @pytest.fixture()
 def parchear(rutas, monkeypatch):
-    src, agg, tmp = rutas
+    src, tmp = rutas
     for modulo in (servicio, pdf_generador):
         monkeypatch.setattr(modulo, "DB_PATH_DEFAULT", src)
-        monkeypatch.setattr(modulo, "AGG_PATH_DEFAULT", agg)
         monkeypatch.setattr(modulo, "OUT_DIR_DEFAULT", tmp / "referencia")
     monkeypatch.setattr(pdf_generador, "OUT_PDF_DEFAULT", tmp / "pdf" / "reporte.pdf")
     monkeypatch.setattr(ri, "DB_PATH_DEFAULT", src)
@@ -116,13 +114,6 @@ def test_boton_descarga_sirve_el_json_en_disco(dashboard_app, parchear, nid):
     assert botones[0].proto.url.endswith(_url(contenido, f"{nid}.json") + ".json")
 
 
-@pytest.mark.parametrize("nid", OTRAS)
-def test_otras_necesidades_no_tienen_descarga_individual(dashboard_app, nid):
-    dashboard_app.sidebar.radio[0].set_value(nid).run()
-    assert not list(dashboard_app.exception)
-    assert not [b for b in _descargas(dashboard_app) if "JSON" in b.proto.label]
-
-
 # ---------------------------------------------------------------------------
 # Parte B: JSON de la IA local
 # ---------------------------------------------------------------------------
@@ -176,7 +167,7 @@ def test_json_ia_pasa_por_la_validacion_de_cifras(parchear, monkeypatch):
 
 def test_json_ia_rechaza_necesidades_fuera_de_la_entrega():
     with pytest.raises(ValueError):
-        fe.generar_entrega_ia("N3")
+        fe.generar_entrega_ia("N11")  # ya no existe (Fase 24)
 
 
 @pytest.fixture()
@@ -192,9 +183,9 @@ def app_ia(parchear, monkeypatch):
     return _instalar
 
 
-def test_seccion_de_entrega_tiene_5_botones_y_el_aviso(app_ia):
+def test_seccion_de_entrega_tiene_10_botones_y_el_aviso(app_ia):
     at = app_ia(ModeloSimulado([], []))
-    assert any(e.label == "📋 Entrega: JSON de la IA para las 5 necesidades" for e in at.expander)
+    assert any(e.label == "📋 Entrega: JSON de la IA para las 10 necesidades" for e in at.expander)
     botones = [b.label for b in at.button if b.label.startswith("Generar JSON de IA")]
     assert botones == [f"Generar JSON de IA para {nid}" for nid in ENTREGA]
     assert any(i.value == app_instacart.AVISO_ENTREGA_IA for i in at.info)
@@ -236,13 +227,13 @@ def test_el_chat_normal_no_cambia(app_ia):
 # ---------------------------------------------------------------------------
 
 def test_documento_de_entrega_reusa_pregunta_y_decision_de_analytics():
-    import sys
     from pathlib import Path
 
-    texto = Path("docs/ENTREGA_5_NECESIDADES.md").read_text(encoding="utf-8")
+    from src.analytics.necesidades import DEFINICIONES
+
+    texto = Path("docs/ENTREGA_NECESIDADES.md").read_text(encoding="utf-8")
     for nid in ENTREGA:
-        modulo = sys.modules[NECESIDADES[nid].__module__]
-        assert f"- **Petición:** {modulo.PREGUNTA}\n" in texto, nid
-        assert f"- **Necesidad:** {modulo.DECISION}\n" in texto, nid
-    for nid in OTRAS:
-        assert f"## {nid} " not in texto
+        d = DEFINICIONES[nid]
+        assert f"- **Petición:** {d.pregunta}\n" in texto, nid
+        assert f"- **Necesidad:** {d.decision}\n" in texto, nid
+    assert "## N11 " not in texto

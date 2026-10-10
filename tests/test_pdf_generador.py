@@ -2,10 +2,9 @@
 
 Todos corren contra la fixture chica (`tests/fixtures/instacart_needs/`),
 no contra `data/instacart.duckdb` real: el texto de hallazgos/limitaciones
-que estos tests verifican (censura, "no causal", TECHO, etc.) sale de
-cadenas fijas en `src.analytics`, no depende del volumen de datos -- se
-verificó a mano que aparecen igual en un PDF generado contra el dataset
-completo (ver `docs/FASE4_REPORTE.md`). Mantenerlos fuera de `integration`
+que estos tests verifican (censura, unidades = líneas, etc.) sale de
+cadenas fijas en `src.analytics.necesidades`, no depende del volumen de
+datos. Fase 24: 10 necesidades de una sola consulta. Mantenerlos fuera de `integration`
 los deja correr siempre, sin depender de tener el dataset completo en disco.
 """
 
@@ -32,20 +31,17 @@ PATRON_DINERO = re.compile(r"ingres|dinero|ganancia|precio|revenue|\$|USD|MXN", 
 # pueden mencionar dinero, precisamente para aclarar que no existe).
 MARCADORES_NEGACION = (
     "no hay", "no se puede", "no dice nada", "no se afirma", "no tiene",
-    "ni ganancia", "ni ingreso", "sin montos", "sin precios",
+    "ni ganancia", "ni ingreso", "sin montos", "sin precios", "nunca en dinero",
 )
 
-# Punto 2c del prompt de Fase 4: 8 necesidades con limitación crítica
-# obligatoria, verificadas por palabra clave (no texto exacto).
+# Limitaciones que el PDF debe mostrar sí o sí, verificadas por palabra
+# clave (no texto exacto): son las que cambian cómo se lee la respuesta.
 PALABRAS_CLAVE_CRITICAS = {
-    "N1": ["censura"],
-    "N4": ["censurado", "censura"],
-    "N5": ["hipótesis"],
-    "N7": ["no causal"],
-    "N8": ["construcción"],
-    "N9": ["no causal", "asociación"],
-    "N10": ["hipótesis"],
-    "N11": ["techo"],
+    "N1": ["una unidad = una línea"],
+    "N2": ["count(distinct order_id)"],
+    "N3": ["recompras / veces"],
+    "N6": ["censurado en 30"],
+    "N7": ["pasillo «missing»"],
 }
 
 # Literales numéricos permitidos fuera de configuración de layout (ver el
@@ -64,11 +60,11 @@ LISTA_BLANCA_NUMERICA = {
 @pytest.fixture(scope="module")
 def pdf_generado(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("pdf_fixture")
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_pdf = tmp_path / "reporte.pdf"
     t0 = time.perf_counter()
     resumen = generador.generar_pdf(
-        db_path=src, agg_path=agg, out_dir=tmp_path / "referencia",
+        db_path=src, out_dir=tmp_path / "referencia",
         out_pdf=out_pdf, raw_dir=RAW_DIR,
     )
     duracion_medida = time.perf_counter() - t0
@@ -90,12 +86,12 @@ def test_pdf_se_genera_y_tiene_paginas(pdf_generado):
     resumen, _ = pdf_generado
     assert resumen.ruta.exists()
     lector = PdfReader(str(resumen.ruta))
-    # Portada + Índice + 11 secciones + Apéndice (>=1 página) + Parámetros
-    # (>=1 página): al menos 14 páginas incluso en la fixture chica.
-    assert len(lector.pages) >= 14
+    # Portada + Índice + 10 secciones + Apéndice (>=1 página) + Parámetros
+    # (>=1 página): al menos 13 páginas incluso en la fixture chica.
+    assert len(lector.pages) >= 13
 
 
-def test_pdf_tiene_las_11_secciones_de_necesidad(texto_pdf):
+def test_pdf_tiene_las_10_secciones_de_necesidad(texto_pdf):
     for nid in generador.NECESIDADES_ORDEN:
         assert re.search(rf"\b{nid}\s+—", texto_pdf), f"no se encontró el encabezado de {nid} en el PDF"
 
@@ -110,7 +106,12 @@ def test_apendice_incluye_sql_de_cada_necesidad(texto_pdf):
     # Un fragmento de SQL que solo aparece en las consultas reales (no en
     # prosa): confirma que el apéndice trae las consultas, no un resumen.
     assert "SELECT" in texto_pdf
-    assert texto_pdf.count("SELECT") >= 11  # al menos 1 por necesidad
+    assert texto_pdf.count("SELECT") >= len(generador.NECESIDADES_ORDEN)  # al menos 1 por necesidad
+
+
+def test_cada_seccion_trae_respuesta_y_resultado_crudo(texto_pdf):
+    assert texto_pdf.count("Resultado crudo de la consulta") == len(generador.NECESIDADES_ORDEN)
+    assert texto_pdf.count("Respuesta") >= len(generador.NECESIDADES_ORDEN)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +121,9 @@ def test_apendice_incluye_sql_de_cada_necesidad(texto_pdf):
 @pytest.mark.parametrize("nid", sorted(PALABRAS_CLAVE_CRITICAS))
 def test_limitacion_critica_presente(texto_pdf, nid):
     palabras = PALABRAS_CLAVE_CRITICAS[nid]
-    encontrada = any(p.lower() in texto_pdf.lower() for p in palabras)
+    # El PDF parte las líneas: se compara con los espacios normalizados.
+    normal = " ".join(texto_pdf.lower().split())
+    encontrada = any(p.lower() in normal for p in palabras)
     assert encontrada, f"{nid}: ninguna de {palabras} aparece en el texto del PDF"
 
 
@@ -143,10 +146,10 @@ def test_pdf_sin_lenguaje_de_dinero_fuera_de_disclaimers(texto_pdf):
 # ---------------------------------------------------------------------------
 
 def test_portada_cifras_coinciden_con_ficha(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_pdf = tmp_path / "reporte2.pdf"
     resumen = generador.generar_pdf(
-        db_path=src, agg_path=agg, out_dir=tmp_path / "referencia",
+        db_path=src, out_dir=tmp_path / "referencia",
         out_pdf=out_pdf, raw_dir=RAW_DIR,
     )
     import duckdb
@@ -175,15 +178,15 @@ def _texto_sin_fecha(texto: str) -> str:
 
 
 def test_determinismo_de_contenido_dos_corridas(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
 
     pdf1 = tmp_path / "r1.pdf"
-    r1 = generador.generar_pdf(db_path=src, agg_path=agg, out_dir=out_dir, out_pdf=pdf1, raw_dir=RAW_DIR)
+    r1 = generador.generar_pdf(db_path=src, out_dir=out_dir, out_pdf=pdf1, raw_dir=RAW_DIR)
     texto1 = "\n".join(p.extract_text() for p in PdfReader(str(r1.ruta)).pages)
 
     pdf2 = tmp_path / "r2.pdf"
-    r2 = generador.generar_pdf(db_path=src, agg_path=agg, out_dir=out_dir, out_pdf=pdf2, raw_dir=RAW_DIR)
+    r2 = generador.generar_pdf(db_path=src, out_dir=out_dir, out_pdf=pdf2, raw_dir=RAW_DIR)
     texto2 = "\n".join(p.extract_text() for p in PdfReader(str(r2.ruta)).pages)
 
     assert _texto_sin_fecha(texto1) == _texto_sin_fecha(texto2), (

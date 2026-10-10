@@ -1,4 +1,4 @@
-"""Dashboard de las 11 necesidades analíticas de Instacart (Fase 3).
+"""Dashboard de las 10 necesidades analíticas de Instacart (Fase 3; Fase 24).
 
 Para correrla (standalone, aislada del chat):
 
@@ -15,8 +15,7 @@ Esta UI NO tiene lógica de negocio propia y NUNCA llama a
 directamente: todo pasa por `src.dashboard.servicio`, que sirve los
 resultados ya precalculados en `data/referencia/*.json` (con caché
 validada contra la huella de la BD fuente) y solo recalcula cuando hace
-falta. N10 y N11 miden hasta 6-8s en el peor caso (ver
-`docs/FASE2B_REPORTE.md`), muy por encima de lo aceptable en cada rerun de
+falta. La más lenta (N2, ~5 s) ya es demasiado para cada rerun de
 Streamlit -- por eso el botón "Actualizar datos" es la única vía para
 disparar un recálculo, nunca un render de panel.
 
@@ -38,11 +37,13 @@ import pandas as pd
 import streamlit as st
 
 from src.analytics.contrato import ResultadoNecesidad
+from src.analytics.necesidades import columnas_ordenadas
+from src.analytics.registro import NECESIDADES
 from src.dashboard import graficas_datos as gd
 from src.dashboard import servicio
 from src.pdf import generador as pdf_generador
 
-NECESIDADES_IDS = [f"N{i}" for i in range(1, 12)]
+NECESIDADES_IDS = list(NECESIDADES)
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ def cargar(necesidad_id: str) -> servicio.CargaNecesidad:
 @st.cache_data(show_spinner=False)
 def _pdf_vigente_cacheado(version: int) -> bool:
     # Mismo motivo que `_cargar_cacheado`: `pdf_vigente()` abre su propia
-    # conexión y llama a `cargar_necesidad` x11 (barato con caché tibia,
+    # conexión y llama a `cargar_necesidad` x10 (barato con caché tibia,
     # ~0.2s medido, pero no gratis en CADA rerun de Streamlit).
     return pdf_generador.pdf_vigente(pdf_generador.OUT_PDF_DEFAULT)
 
@@ -116,179 +117,32 @@ def _seguro(df: pd.DataFrame, construir):
 
 
 # ---------------------------------------------------------------------------
-# Gráficas por necesidad: cada función recibe el ResultadoNecesidad ya
-# cargado y devuelve una lista de (título, gráfica Altair | None) usando
-# SOLO las tablas que ya trae `r.tablas` -- ninguna calcula ni inventa datos
-# nuevos. `None` significa "sin datos suficientes para esta gráfica" (ver
-# `_seguro`); el bucle de render en la sección de UI lo muestra como aviso.
+# Gráfica de la necesidad (Fase 24: una genérica para las 10). Recibe el
+# ResultadoNecesidad ya cargado y usa SOLO su tabla (`graficas_datos`): no
+# calcula ni inventa datos. Devuelve [(título, gráfica | None)]; `None`
+# significa "sin datos suficientes" (ver `_seguro`). Las necesidades de tipo
+# escalar no tienen gráfica: lista vacía.
 # ---------------------------------------------------------------------------
 
-def graficos_n1(r: ResultadoNecesidad):
-    df = gd.datos_n1(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_circle(opacity=0.55, size=60).encode(
-        x=alt.X("lineas:Q", title="Volumen (líneas, escala log)", scale=alt.Scale(type="log")),
-        y=alt.Y("tasa_recompra:Q", title="Tasa de recompra", axis=alt.Axis(format="%")),
-        color=alt.Color("clasificacion:N", title="Clasificación"),
-        tooltip=["product_name", "lineas", "tasa_recompra", "tasa_abandono", "clasificacion"],
-    ).properties(height=420))
-    return [("Dispersión: volumen vs. tasa de recompra, por clasificación", chart)]
-
-
-def graficos_n2(r: ResultadoNecesidad):
-    df = gd.datos_n2(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("lift:Q", title="Lift"),
-        y=alt.Y("par:N", sort="-x", title=None),
-        tooltip=["par", "lift", "pedidos_con_par", "confianza_a_b", "confianza_b_a", "soporte"],
-    ).properties(height=520))
-    return [("Top 20 pares por lift (de los 50 en la tabla)", chart)]
-
-
-def graficos_n3(r: ResultadoNecesidad):
-    df = gd.datos_n3(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_rect().encode(
-        x=alt.X("order_hour_of_day:O", title="Hora del día (0-23, anónima)"),
-        y=alt.Y("order_dow:O", title="Día de la semana (0-6, anónimo)"),
-        color=alt.Color("n_pedidos:Q", title="Pedidos", scale=alt.Scale(scheme="blues")),
-        tooltip=["order_dow", "order_hour_of_day", "n_pedidos", "indice", "pico", "valle"],
-    ).properties(height=320))
-    return [("Mapa de calor: pedidos por día x hora", chart)]
-
-
-def graficos_n4(r: ResultadoNecesidad):
-    datos = gd.datos_n4(r)
+def graficos(r: ResultadoNecesidad) -> list:
+    datos = gd.datos_grafica(r)
+    if datos is None:
+        return []
+    df = datos.df.reset_index(drop=True)
+    if not df.empty:
+        df["respuesta"] = ["Responde la pregunta" if i < datos.filas_respuesta else "Contexto"
+                           for i in range(len(df))]
 
     def _construir(d):
-        hist = alt.Chart(d).mark_bar().encode(
-            x=alt.X("razon:Q", bin=alt.Bin(maxbins=20), title="Razón último/típico"),
-            y=alt.Y("count():Q", title="Usuarios (dentro del top 50 mostrado)"),
-            tooltip=["count()"],
-        )
-        regla = alt.Chart(pd.DataFrame({"umbral": [datos.umbral_razon]})).mark_rule(
-            color="red", strokeDash=[5, 4], size=2
-        ).encode(x="umbral:Q")
-        return (hist + regla).properties(height=350)
+        return alt.Chart(d).mark_bar().encode(
+            x=alt.X(f"{datos.valor}:Q", title=datos.valor),
+            y=alt.Y(f"{datos.categoria}:N", sort="-x" if d[datos.valor].iloc[0] >= d[datos.valor].iloc[-1] else "x",
+                    title=datos.categoria),
+            color=alt.Color("respuesta:N", title=""),
+            tooltip=list(d.columns),
+        ).properties(height=max(160, 28 * len(d)))
 
-    chart = _seguro(datos.df, _construir)
-    return [("Distribución de razón (top 50 por razón) con línea de UMBRAL_RAZON", chart)]
-
-
-def graficos_n5(r: ResultadoNecesidad):
-    df = gd.datos_n5(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("indice_ancla:Q", title="Índice ancla"),
-        y=alt.Y("product_name:N", sort="-x", title=None),
-        tooltip=["product_name", "indice_ancla", "apariciones", "usuarios_distintos", "usuarios_primero", "tasa_primero"],
-    ).properties(height=520))
-    return [("Top 20 productos por índice_ancla (entre elegibles)", chart)]
-
-
-def graficos_n6(r: ResultadoNecesidad):
-    df = gd.datos_n6(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_circle(size=140, opacity=0.75).encode(
-        x=alt.X("lineas:Q", title="Volumen (líneas)"),
-        y=alt.Y("tasa_recompra:Q", title="Tasa de recompra", axis=alt.Axis(format="%")),
-        color=alt.Color("cuadrante:N", title="Cuadrante"),
-        tooltip=["nombre", "lineas", "pct_lineas", "tasa_recompra", "cuadrante"],
-    ).properties(height=420))
-    return [("Departamentos por cuadrante (volumen vs. tasa de recompra)", chart)]
-
-
-def graficos_n7(r: ResultadoNecesidad):
-    datos = gd.datos_n7(r)
-    linea = _seguro(datos.df_k, lambda d: alt.Chart(d).mark_line(point=True).encode(
-        x=alt.X("k:Q", title="Número de pedido (order_number)"),
-        y=alt.Y("tamano_medio:Q", title="Tamaño medio"),
-        tooltip=["k", "tamano_medio", "tasa_recompra", "usuarios_n", "productos_nuevos_por_pedido"],
-    ).properties(height=320))
-
-    barras = _seguro(datos.df_pareado, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("diferencia_media:Q", title="Diferencia media (pedido 10 − pedido 1)"),
-        y=alt.Y("métrica:N", title=None),
-        color=alt.condition("datum.diferencia_media >= 0", alt.value("#2a9d8f"), alt.value("#e76f51")),
-        tooltip=["métrica", "diferencia_media"],
-    ).properties(height=220))
-    return [
-        ("Tamaño medio por número de pedido (k) — curva de composición, no trayectoria individual", linea),
-        (f"Comparación pareada: mismo usuario, pedido 1 vs 10 (n={datos.n_usuarios_pareado:,})", barras),
-    ]
-
-
-def graficos_n8(r: ResultadoNecesidad):
-    datos = gd.datos_n8(r)
-
-    def _construir(d):
-        hist = alt.Chart(d).mark_bar().encode(
-            x=alt.X("bin_decimo:Q", title="índice_novedad (bin de ancho 0.1, 0=nunca repite... 9=siempre lo mismo)"),
-            y=alt.Y("n_usuarios:Q", title="Usuarios"),
-            tooltip=["bin_decimo", "n_usuarios"],
-        )
-        if datos.corte_rutinario is not None and datos.corte_explorador is not None:
-            reglas = alt.Chart(pd.DataFrame({
-                "corte": [datos.corte_rutinario * 10, datos.corte_explorador * 10],
-                "tipo": ["rutinario (P25)", "explorador (P75)"],
-            })).mark_rule(color="red", strokeDash=[5, 4], size=2).encode(x="corte:Q", tooltip=["tipo", "corte"])
-            return (hist + reglas).properties(height=350)
-        return hist.properties(height=350)
-
-    chart = _seguro(datos.df, _construir)
-    return [("Histograma de índice_novedad, con los cortes rutinario/explorador", chart)]
-
-
-def graficos_n9(r: ResultadoNecesidad):
-    df_hist = gd.datos_n9_histograma(r)
-    hist = _seguro(df_hist, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("tamano_bin:Q", title="Tamaño de pedido (último bin = TAM_MAX+ agrupado)"),
-        y=alt.Y("pedidos:Q", title="Pedidos"),
-        color=alt.condition("datum.es_cubo_final", alt.value("#e76f51"), alt.value("#457b9d")),
-        tooltip=["tamano_bin", "pedidos", "es_cubo_final"],
-    ).properties(height=320))
-
-    factor_key = st.selectbox(
-        "Factor para la desviación intra-usuario", list(gd.FACTORES_N9),
-        format_func=lambda k: gd.FACTORES_N9[k], key="n9_factor",
-    )
-    df_factor = gd.datos_n9_factor(r, factor_key)
-    barras = _seguro(df_factor, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("valor:N", title=gd.FACTORES_N9[factor_key], sort=None),
-        y=alt.Y("desviacion_intra_usuario:Q", title="Desviación intra-usuario (productos)"),
-        color=alt.condition("datum.desviacion_intra_usuario >= 0", alt.value("#2a9d8f"), alt.value("#e76f51")),
-        tooltip=["valor", "desviacion_intra_usuario", "tamano_medio_bruto", "pedidos"],
-    ).properties(height=320))
-    return [
-        ("Histograma de tamaño de pedido (naranja = cubo final, >= TAM_MAX+1)", hist),
-        (f"Desviación intra-usuario por {gd.FACTORES_N9[factor_key].lower()}", barras),
-    ]
-
-
-def graficos_n10(r: ResultadoNecesidad):
-    df = gd.datos_n10(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("tramo:O", title="Tramo del carrito (0=inicio ... 4=final)"),
-        y=alt.Y("tasa_recompra:Q", title="Tasa de recompra", axis=alt.Axis(format="%")),
-        tooltip=["tramo", "lineas", "tasa_recompra"],
-    ).properties(height=350))
-    return [("Tasa de recompra por tramo (posición relativa en el carrito)", chart)]
-
-
-def graficos_n11(r: ResultadoNecesidad):
-    df = gd.datos_n11(r)
-    chart = _seguro(df, lambda d: alt.Chart(d).mark_bar().encode(
-        x=alt.X("k:O", title="K"),
-        xOffset="metodo:N",
-        y=alt.Y("hit_rate:Q", title="Hit-rate", axis=alt.Axis(format="%")),
-        color=alt.Color("metodo:N", title="Método"),
-        tooltip=["metodo", "k", "hit_rate", "recall_macro", "precision_macro", "n_usuarios"],
-    ).properties(height=380))
-    return [("Comparación de métodos y K: hit-rate", chart)]
-
-
-GRAFICOS = {
-    "N1": graficos_n1, "N2": graficos_n2, "N3": graficos_n3, "N4": graficos_n4,
-    "N5": graficos_n5, "N6": graficos_n6, "N7": graficos_n7, "N8": graficos_n8,
-    "N9": graficos_n9, "N10": graficos_n10, "N11": graficos_n11,
-}
-
+    return [(datos.titulo, _seguro(df, _construir))]
 
 # ---------------------------------------------------------------------------
 # Sidebar: selector de necesidad + botón global de actualización
@@ -300,7 +154,7 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
     panel derecho en la app de dos paneles). Devuelve la necesidad elegida."""
     area.title("📊 Dashboard Instacart")
     area.caption(
-        "Fase 3 — 11 necesidades sobre datos reales de Instacart, sin IA. "
+        f"{len(NECESIDADES_IDS)} necesidades de una sola consulta sobre datos reales de Instacart, sin IA. "
         "Sirve resultados precalculados; nunca recalcula al cambiar de panel."
     )
 
@@ -321,7 +175,7 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
             etiqueta = "recalculada" if estado.recalculada else "ya vigente"
             if estado.error:
                 etiqueta = f"ERROR: {estado.error}"
-            barra.progress(contador["i"] / 11, text=f"{estado.id}: {etiqueta} ({estado.duracion_s:.2f}s)")
+            barra.progress(contador["i"] / len(NECESIDADES_IDS), text=f"{estado.id}: {etiqueta} ({estado.duracion_s:.2f}s)")
 
         resumen = servicio.refrescar_todas(forzar=forzar, al_terminar_cada_una=_avance)
         st.session_state["ultimo_refresco"] = resumen
@@ -331,7 +185,7 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
     ultimo = st.session_state["ultimo_refresco"]
     if ultimo is not None:
         area.success(
-            f"Último refresco: {ultimo.n_recalculadas}/11 recalculadas en "
+            f"Último refresco: {ultimo.n_recalculadas}/{len(ultimo.estados)} recalculadas en "
             f"{ultimo.duracion_total_s:.2f}s ({ultimo.n_errores} errores)."
         )
         with area.expander("Detalle del último refresco"):
@@ -364,7 +218,7 @@ def render_controles(area=st.sidebar, *, horizontal: bool = False) -> str:
         area.caption("⚠️ El PDF existe, pero al menos una necesidad cambió desde que se generó (huella_bd distinta).")
 
     forzar_pdf = area.checkbox(
-        "Recalcular las 11 necesidades antes de generar el PDF",
+        f"Recalcular las {len(NECESIDADES_IDS)} necesidades antes de generar el PDF",
         value=False, key="forzar_pdf",
         help="Sin marcar, el PDF usa la caché de cada necesidad tal cual esté (igual que un panel); "
              "solo recalcula lo que falte o esté rancio.",
@@ -451,8 +305,14 @@ def render_panel(necesidad_sel: str) -> None:
         if r.universo.filtros:
             st.caption("Filtros: " + "; ".join(r.universo.filtros))
 
-    st.subheader("Gráficas")
-    for titulo_grafico, chart in GRAFICOS[necesidad_sel](r):
+    st.subheader("Respuesta")
+    for h in r.hallazgos:
+        st.markdown(f"- {h}")
+
+    graficas = graficos(r)
+    if graficas:
+        st.subheader("Gráfica")
+    for titulo_grafico, chart in graficas:
         st.markdown(f"*{titulo_grafico}*")
         if chart is None:
             st.info("No hay datos suficientes para esta gráfica con el universo/parámetros actuales.")
@@ -460,15 +320,17 @@ def render_panel(necesidad_sel: str) -> None:
             st.altair_chart(chart, use_container_width=True)
 
     st.subheader("Valores clave")
-    n_cols = min(4, len(r.valores_clave)) or 1
+    # Las listas (p. ej. el top 10 de nombres) ya están en «Respuesta»: una métrica no las muestra bien.
+    escalares = [vc for vc in r.valores_clave if not isinstance(vc.valor, list)]
+    n_cols = min(4, len(escalares)) or 1
     cols = st.columns(n_cols)
-    for i, vc in enumerate(r.valores_clave):
+    for i, vc in enumerate(escalares):
         with cols[i % n_cols]:
             st.metric(vc.etiqueta, _fmt_valor(vc.valor, vc.unidad))
 
-    st.subheader("Hallazgos")
-    for h in r.hallazgos:
-        st.markdown(f"- {h}")
+    st.subheader("Consulta SQL de referencia")
+    for consulta in r.consultas:
+        st.code(consulta.sql, language="sql")
 
     st.subheader("⚠️ Limitaciones")
     st.caption("Siempre visibles, nunca en un expander colapsado por defecto.")
@@ -479,10 +341,10 @@ def render_panel(necesidad_sel: str) -> None:
         for p in r.parametros:
             st.markdown(f"**{p.nombre}** = `{p.valor}`  \n{p.justificacion}")
 
-    with st.expander("Tablas de datos (las mismas que alimentan las gráficas de arriba)"):
+    with st.expander("Resultado crudo de la consulta (la misma tabla que alimenta la gráfica)"):
         for nombre_tabla, filas in r.tablas.items():
             st.caption(f"`{nombre_tabla}` — {r.tablas_criterio_corte.get(nombre_tabla, '')}")
-            st.dataframe(_df(filas), use_container_width=True, height=min(320, 45 + 30 * len(filas)))
+            st.dataframe(_df(filas)[columnas_ordenadas(r.id, filas)] if filas else _df(filas), use_container_width=True, height=min(320, 45 + 30 * len(filas)))
 
 
 def main() -> None:

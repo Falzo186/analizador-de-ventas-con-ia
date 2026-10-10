@@ -91,11 +91,11 @@ def test_cli_escribe_el_log_despues_de_cada_intento(parchear, tmp_path, capsys):
     assert "Intento 3 de 3 · chico" in salida
 
 
-def test_cli_todas_corre_las_11(parchear, tmp_path):
+def test_cli_todas_corre_las_10(parchear, tmp_path):
     parchear(ModeloIteraciones())
     assert ij.main(["todas", "--iteraciones", "1", "--pequeno", "chico", "--grande", "-",
                     "--out", str(tmp_path)]) == 0
-    assert len(list(tmp_path.glob("*_iteraciones_juez.json"))) == len(ij.PREGUNTAS) == 11
+    assert len(list(tmp_path.glob("*_iteraciones_juez.json"))) == len(ij.PREGUNTAS) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -145,8 +145,9 @@ def test_export_de_todas_las_corridas(parchear):
 def test_autocorreccion_pasa_el_intento_anterior_al_siguiente(parchear):
     modelo = parchear(ModeloIteraciones(
         sql=["SELECT COUNT(*) AS n FROM orders WHERE order_dow = 0", SQL_OK],
-        juez=[_juez("incorrecta", "la referencia cuenta todos los pedidos, no solo el día 0"),
-              _juez("correcta", "coincide")],
+        juez=[_juez("incorrecta", "la referencia cuenta todos los pedidos, no solo el día 0",
+                    "Filtras por order_dow y la pregunta no pide filtrar por día."),
+              _juez("correcta", "coincide", "")],
     ))
     corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=2, modo=ij.MODO_AUTOCORRECCION)
     chico1, chico2, grande1, _ = corrida.iteraciones
@@ -155,9 +156,15 @@ def test_autocorreccion_pasa_el_intento_anterior_al_siguiente(parchear):
     retro = chico2.retroalimentacion
     assert "intento 1 de 2" in retro
     assert "SQL que generaste: SELECT COUNT(*) AS n FROM orders WHERE order_dow = 0" in retro
-    assert "Resultado que dio esa consulta:\nn\n" in retro
-    assert f"Respuesta que redactaste: {chico1.respuesta}" in retro
-    assert "Veredicto del evaluador: INCORRECTA. Motivo: la referencia cuenta todos los pedidos" in retro
+    # Fase 24: la forma del resultado, no sus filas; ni la redacción anterior.
+    assert "devolvió 1 fila(s) con las columnas: n." in retro
+    assert chico1.respuesta not in retro and "Respuesta que redactaste" not in retro
+    assert "Veredicto del evaluador: INCORRECTA." in retro
+    assert ("Qué está mal en el enfoque, según el evaluador: Filtras por order_dow y la pregunta no pide "
+            "filtrar por día.") in retro
+    # La comparación con la referencia (justificación) NUNCA pasa al siguiente intento.
+    assert chico1.justificacion == "la referencia cuenta todos los pedidos, no solo el día 0"
+    assert chico1.justificacion not in retro
     # Cada modelo tiene su propia cadena: el grande empieza de cero.
     assert grande1.retroalimentacion is None
 
@@ -175,7 +182,7 @@ def test_autocorreccion_incluye_el_error_si_el_intento_fallo(parchear):
     corrida = ij.correr_iteraciones("N3", modelos=["chico"], n=2, modo=ij.MODO_AUTOCORRECCION)
     primero, segundo = corrida.iteraciones
     assert not primero.ok
-    assert f"Error: {primero.error}" in segundo.retroalimentacion
+    assert f"Error (mensaje exacto): {primero.error}" in segundo.retroalimentacion
     assert "Veredicto del evaluador: INCORRECTA" in segundo.retroalimentacion
 
 

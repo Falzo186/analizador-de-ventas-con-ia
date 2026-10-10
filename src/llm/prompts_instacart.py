@@ -170,38 +170,62 @@ def prompt_respuesta_estricta_instacart(
 VEREDICTOS_JUEZ: tuple[str, ...] = ("correcta", "parcialmente correcta", "incorrecta")
 
 _SISTEMA_JUEZ = """\
-Eres un evaluador estricto. Comparas la RESPUESTA GENERADA por un asistente
-con la RESPUESTA DE REFERENCIA, que es correcta: la calculó un programa
-determinista sobre los mismos datos (dataset Instacart). Calificas qué tan
-apegada está la respuesta generada a la referencia en CONTENIDO (datos y
-conclusiones), no en redacción ni en estilo.
+Eres un evaluador estricto. Comparas el INTENTO de un asistente (su SQL, el
+resultado de ese SQL y su respuesta redactada) con la REFERENCIA, que es
+correcta: un programa determinista ejecutó el SQL de referencia sobre los
+mismos datos (dataset Instacart). Calificas el CONTENIDO (datos y
+conclusiones), no la redacción ni el estilo.
 
-- "correcta": responde lo que se pregunta y sus datos o conclusiones
-  principales coinciden con la referencia (se aceptan cifras redondeadas).
-- "parcialmente correcta": acierta en algo (alguna cifra o conclusión
-  coincide con la referencia), pero responde solo una parte de la pregunta,
-  omite lo principal o mezcla aciertos con errores.
-- "incorrecta": no responde la pregunta, contradice la referencia, sus
-  cifras no coinciden con ninguna de la referencia, o dice que no hay datos
-  cuando la referencia sí los tiene.
+- "correcta": responde lo que se pregunta y sus datos principales coinciden
+  con la referencia (se aceptan cifras redondeadas y empates en otro orden).
+- "parcialmente correcta": acierta en algo (algún dato coincide con la
+  referencia), pero responde solo una parte, usa otra métrica o mezcla
+  aciertos con errores.
+- "incorrecta": no responde la pregunta, sus datos no coinciden con la
+  referencia, o dice que no hay datos cuando la referencia sí los tiene.
 
-La referencia es más detallada que una respuesta breve: no exijas que repita
-todo, pero sí lo esencial para la pregunta. No uses conocimiento propio:
-solo la referencia decide qué es correcto.
+No uses conocimiento propio: solo la referencia decide qué es correcto.
 
-Responde ÚNICAMENTE con un objeto JSON, sin texto adicional:
-{"veredicto": "correcta" | "parcialmente correcta" | "incorrecta",
- "justificacion": "<una o dos frases: en qué se parece a la referencia o en qué falló>"}
+Escribe DOS textos separados:
+1. "comparacion": en qué coincide o difiere el resultado del intento con el
+   de la referencia. Aquí SÍ puedes citar valores, nombres y cifras de la
+   referencia. Este texto NUNCA se le muestra al asistente.
+2. "diagnostico_enfoque": qué está mal en el ENFOQUE del intento, para que el
+   asistente lo corrija en su próximo intento SIN ver la respuesta correcta.
+   Señala la causa concreta: tabla o JOIN que falta o sobra (p. ej. "falta
+   el JOIN con products para traer el nombre"), columna equivocada,
+   agrupación, filtro, métrica (p. ej. "cuentas líneas en vez de pedidos
+   distintos", "te quedaste con el conteo absoluto en vez de dividir entre
+   el total de veces comprado"), orden, LIMIT, o un problema de la
+   redacción. PROHIBIDO en este texto: cualquier cifra, nombre de producto,
+   pasillo o departamento, o valor del resultado de la referencia, y copiar
+   el SQL de referencia. Si el intento es correcto, escribe "".
+
+Responde ÚNICAMENTE con un objeto JSON, sin texto adicional, con las claves en este orden:
+{"comparacion": "<una o dos frases>",
+ "veredicto": "correcta" | "parcialmente correcta" | "incorrecta",
+ "diagnostico_enfoque": "<una o dos frases, sin valores de la referencia>"}
 """
 
 
-def prompt_juez_instacart(pregunta: str, referencia: str, respuesta: str) -> tuple[str, str]:
-    """(sistema, usuario) del juez de la Fase 11 (`src.llm.iteraciones_juez`):
-    la pregunta, la respuesta de referencia (del software determinista) y
-    la respuesta generada en una iteración."""
+def prompt_juez_instacart(
+    pregunta: str, referencia: str, respuesta: str, *, sql_generado: str | None = None,
+    resultado_generado: str | None = None,
+) -> tuple[str, str]:
+    """(sistema, usuario) del juez (`src.llm.iteraciones_juez`): la pregunta,
+    la referencia (SQL + resultado + redacción del software determinista) y
+    el intento: SQL generado, su resultado y la respuesta redactada.
+    Fase 24: el juez ve también el SQL y el resultado del intento, para poder
+    diagnosticar el ENFOQUE y no solo comparar la redacción."""
+    intento = []
+    if sql_generado is not None:
+        intento.append(f"SQL del intento:\n{' '.join(sql_generado.split())}")
+    if resultado_generado is not None:
+        intento.append(f"Resultado de ese SQL:\n{resultado_generado.strip()}")
+    intento.append(f"Respuesta redactada:\n{respuesta.strip()}")
     usuario = (
         f"PREGUNTA:\n{pregunta.strip()}\n\n"
-        f"RESPUESTA DE REFERENCIA (correcta):\n{referencia.strip()}\n\n"
-        f"RESPUESTA GENERADA (a evaluar):\n{respuesta.strip()}"
+        f"REFERENCIA (correcta):\n{referencia.strip()}\n\n"
+        "INTENTO DEL ASISTENTE (a evaluar):\n" + "\n\n".join(intento)
     )
     return _SISTEMA_JUEZ, usuario

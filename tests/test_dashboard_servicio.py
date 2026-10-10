@@ -80,14 +80,14 @@ def test_servicio_no_carga_streamlit_en_tiempo_de_ejecucion():
 
 
 def test_cargar_necesidad_con_cache_vigente_no_recalcula(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
 
-    # Precalcula N3 "a mano" (no necesita agregado) y la deja en disco,
+    # Precalcula N3 "a mano" y la deja en disco,
     # como si un `refrescar_todas()` anterior ya la hubiera generado.
     con_prep = duckdb.connect(str(src), read_only=True)
     con_prep.execute("SET memory_limit='4GB'"); con_prep.execute("SET threads=1")
-    resultado_previo = invocar("N3", con_prep, agg)
+    resultado_previo = invocar("N3", con_prep)
     resultado_previo.guardar_json(out_dir / "N3.json")
     con_prep.close()
 
@@ -95,7 +95,7 @@ def test_cargar_necesidad_con_cache_vigente_no_recalcula(tmp_path):
     con_real.execute("SET memory_limit='4GB'"); con_real.execute("SET threads=1")
     espia = _ConexionEspia(con_real)
     try:
-        carga = servicio.cargar_necesidad("N3", db_path=src, agg_path=agg, out_dir=out_dir, con=espia)
+        carga = servicio.cargar_necesidad("N3", db_path=src, out_dir=out_dir, con=espia)
     finally:
         con_real.close()
 
@@ -103,7 +103,7 @@ def test_cargar_necesidad_con_cache_vigente_no_recalcula(tmp_path):
     assert carga.resultado.id == "N3"
     # huella_bd() hace exactamente 3 `execute()` (orders, prior, train);
     # una caché vigente no debe ejecutar nada más (ninguna consulta de
-    # `calcular()`, que son muchas más y mucho más pesadas).
+    # `calcular()`).
     assert espia.llamadas_execute == 3, (
         f"se esperaban exactamente 3 execute() (los de huella_bd), hubo {espia.llamadas_execute}: "
         "una caché vigente no debería tocar más la BD que eso"
@@ -111,12 +111,12 @@ def test_cargar_necesidad_con_cache_vigente_no_recalcula(tmp_path):
 
 
 def test_cargar_necesidad_con_cache_rancia_recalcula(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
 
     con_prep = duckdb.connect(str(src), read_only=True)
     con_prep.execute("SET memory_limit='4GB'"); con_prep.execute("SET threads=1")
-    resultado_previo = invocar("N3", con_prep, agg)
+    resultado_previo = invocar("N3", con_prep)
     resultado_previo.guardar_json(out_dir / "N3.json")
     con_prep.close()
 
@@ -133,14 +133,14 @@ def test_cargar_necesidad_con_cache_rancia_recalcula(tmp_path):
     con_real.execute("SET memory_limit='4GB'"); con_real.execute("SET threads=1")
     espia = _ConexionEspia(con_real)
     try:
-        carga = servicio.cargar_necesidad("N3", db_path=src, agg_path=agg, out_dir=out_dir, con=espia)
+        carga = servicio.cargar_necesidad("N3", db_path=src, out_dir=out_dir, con=espia)
     finally:
         con_real.close()
 
     assert carga.desde_cache is False
     assert carga.resultado.id == "N3"
-    # Recalcular N3 exige bastantes más de 3 execute() (huella_bd + las
-    # consultas propias de n3_picos.calcular()).
+    # Recalcular N3 exige más de 3 execute() (huella_bd + la consulta de
+    # referencia + la huella que guarda calcular()).
     assert espia.llamadas_execute > 3
 
     # El JSON en disco se reescribió con la huella correcta (vigente de nuevo).
@@ -149,67 +149,87 @@ def test_cargar_necesidad_con_cache_rancia_recalcula(tmp_path):
 
 
 def test_cargar_necesidad_sin_json_previo_calcula_y_escribe(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
     assert not (out_dir / "N4.json").exists()
 
-    carga = servicio.cargar_necesidad("N4", db_path=src, agg_path=agg, out_dir=out_dir)
+    carga = servicio.cargar_necesidad("N4", db_path=src, out_dir=out_dir)
 
     assert carga.desde_cache is False
     assert carga.resultado.id == "N4"
     assert (out_dir / "N4.json").exists()
 
     # Una segunda carga, ahora sí, debe venir de caché.
-    carga2 = servicio.cargar_necesidad("N4", db_path=src, agg_path=agg, out_dir=out_dir)
+    carga2 = servicio.cargar_necesidad("N4", db_path=src, out_dir=out_dir)
     assert carga2.desde_cache is True
     assert carga2.resultado.valores_clave == carga.resultado.valores_clave
 
 
 def test_cargar_necesidad_id_desconocido_lanza_valueerror(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     with pytest.raises(ValueError):
-        servicio.cargar_necesidad("N99", db_path=src, agg_path=agg, out_dir=tmp_path / "referencia")
+        servicio.cargar_necesidad("N99", db_path=src, out_dir=tmp_path / "referencia")
 
 
 def test_refrescar_todas_sin_forzar_solo_recalcula_faltantes(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
 
     # Precalcula solo N1 y N3; el resto debe recalcularse en el refresco.
     con_prep = duckdb.connect(str(src), read_only=True)
     con_prep.execute("SET memory_limit='4GB'"); con_prep.execute("SET threads=1")
-    invocar("N1", con_prep, agg).guardar_json(out_dir / "N1.json")
-    invocar("N3", con_prep, agg).guardar_json(out_dir / "N3.json")
+    invocar("N1", con_prep).guardar_json(out_dir / "N1.json")
+    invocar("N3", con_prep).guardar_json(out_dir / "N3.json")
     con_prep.close()
 
-    resumen = servicio.refrescar_todas(forzar=False, db_path=src, agg_path=agg, out_dir=out_dir)
+    resumen = servicio.refrescar_todas(forzar=False, db_path=src, out_dir=out_dir)
 
-    assert {e.id for e in resumen.estados} == set("N" + str(i) for i in range(1, 12))
+    assert {e.id for e in resumen.estados} == set("N" + str(i) for i in range(1, 11))
     assert resumen.n_errores == 0
     por_id = {e.id: e for e in resumen.estados}
     assert por_id["N1"].recalculada is False
     assert por_id["N3"].recalculada is False
-    for nid in ("N2", "N4", "N5", "N6", "N7", "N8", "N9", "N10", "N11"):
+    for nid in ("N2", "N4", "N5", "N6", "N7", "N8", "N9", "N10"):
         assert por_id[nid].recalculada is True, f"{nid} debía recalcularse (sin JSON previo)"
-    assert resumen.n_recalculadas == 9
+    assert resumen.n_recalculadas == 8
     assert resumen.duracion_total_s > 0
     for e in resumen.estados:
         assert e.duracion_s >= 0
 
-    # Las 11 quedaron escritas en disco.
-    for i in range(1, 12):
+    # Las 10 quedaron escritas en disco.
+    for i in range(1, 11):
         assert (out_dir / f"N{i}.json").exists()
 
 
 def test_refrescar_todas_forzar_recalcula_todo_aunque_haya_cache(tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
 
-    primero = servicio.refrescar_todas(forzar=True, db_path=src, agg_path=agg, out_dir=out_dir)
-    assert primero.n_recalculadas == 11
+    primero = servicio.refrescar_todas(forzar=True, db_path=src, out_dir=out_dir)
+    assert primero.n_recalculadas == 10
 
-    segundo = servicio.refrescar_todas(forzar=True, db_path=src, agg_path=agg, out_dir=out_dir)
-    assert segundo.n_recalculadas == 11, "forzar=True debe recalcular todo aunque la caché ya esté vigente"
+    segundo = servicio.refrescar_todas(forzar=True, db_path=src, out_dir=out_dir)
+    assert segundo.n_recalculadas == 10, "forzar=True debe recalcular todo aunque la caché ya esté vigente"
 
-    tercero = servicio.refrescar_todas(forzar=False, db_path=src, agg_path=agg, out_dir=out_dir)
+    tercero = servicio.refrescar_todas(forzar=False, db_path=src, out_dir=out_dir)
     assert tercero.n_recalculadas == 0, "sin forzar, con caché ya vigente de la corrida anterior, no debe recalcular nada"
+
+
+def test_json_de_otra_definicion_se_recalcula_aunque_la_huella_coincida(tmp_path):
+    """Fase 24: al reemplazar las 11 necesidades viejas por las 10 nuevas la BD
+    no cambió; un `N1.json` viejo tiene la huella correcta pero otra pregunta y
+    otro SQL, y NO debe servirse como el N1 nuevo."""
+    src = construir_fixture(tmp_path)
+    out_dir = tmp_path / "referencia"
+    servicio.cargar_necesidad("N1", db_path=src, out_dir=out_dir)
+    ruta = out_dir / "N1.json"
+    data = json.loads(ruta.read_text(encoding="utf-8"))
+    data["pregunta"] = "¿Qué productos se recompran de forma consistente y cuáles se prueban y se abandonan?"
+    data["consultas"] = [{"nombre": "agg_producto", "sql": "SELECT * FROM agg_producto"}]
+    ruta.write_text(json.dumps(data), encoding="utf-8")
+
+    carga = servicio.cargar_necesidad("N1", db_path=src, out_dir=out_dir)
+
+    assert carga.desde_cache is False
+    reescrito = json.loads(ruta.read_text(encoding="utf-8"))
+    assert reescrito["pregunta"] == "¿Cuáles son los 10 productos más vendidos por número de unidades?"

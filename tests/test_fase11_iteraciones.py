@@ -30,8 +30,13 @@ SQL_OK = "SELECT COUNT(*) AS n FROM orders"
 REDACCION_OK = "Hay 21 pedidos."
 
 
-def _juez(veredicto: str, justificacion: str = "motivo") -> str:
-    return json.dumps({"veredicto": veredicto, "justificacion": justificacion}, ensure_ascii=False)
+def _juez(veredicto: str, justificacion: str = "motivo", diagnostico: str | None = None) -> str:
+    """Salida del juez. Sin `diagnostico`, el formato de la Fase 11; con él,
+    el de la Fase 24 ("comparacion" + "diagnostico_enfoque")."""
+    if diagnostico is None:
+        return json.dumps({"veredicto": veredicto, "justificacion": justificacion}, ensure_ascii=False)
+    return json.dumps({"comparacion": justificacion, "veredicto": veredicto, "diagnostico_enfoque": diagnostico},
+                      ensure_ascii=False)
 
 
 class ModeloIteraciones:
@@ -76,16 +81,15 @@ class ModeloIteraciones:
 @pytest.fixture(scope="module")
 def rutas(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("fase11")
-    src, agg = construir_fixture(tmp)
-    return src, agg, tmp
+    src = construir_fixture(tmp)
+    return src, tmp
 
 
 @pytest.fixture()
 def parchear(rutas, monkeypatch):
-    src, agg, tmp = rutas
+    src, tmp = rutas
     for modulo in (servicio, pdf_generador):
         monkeypatch.setattr(modulo, "DB_PATH_DEFAULT", src)
-        monkeypatch.setattr(modulo, "AGG_PATH_DEFAULT", agg)
         monkeypatch.setattr(modulo, "OUT_DIR_DEFAULT", tmp / "referencia")
     monkeypatch.setattr(pdf_generador, "OUT_PDF_DEFAULT", tmp / "pdf" / "reporte.pdf")
     monkeypatch.setattr(ri, "DB_PATH_DEFAULT", src)
@@ -154,7 +158,10 @@ def test_juez_recibe_pregunta_referencia_y_respuesta_generada(parchear):
     assert ij.PREGUNTAS["N3"] in usuario
     assert corrida.referencia in usuario
     assert REDACCION_OK in usuario
-    assert usuario.index("REFERENCIA") < usuario.index("GENERADA")
+    assert usuario.index("REFERENCIA") < usuario.index("INTENTO DEL ASISTENTE")
+    # Fase 24: el juez ve también el SQL y el resultado del intento.
+    assert f"SQL del intento:\n{SQL_OK}" in usuario
+    assert "Resultado de ese SQL:\nn\n21" in usuario
 
 
 @pytest.mark.parametrize("nid", sorted(ij.PREGUNTAS))
@@ -162,12 +169,15 @@ def test_referencia_reusa_el_resultado_determinista(parchear, nid):
     r = servicio.cargar_necesidad(nid).resultado
     texto = ij.referencia_de(nid)
     assert texto == ij.texto_referencia(r)
-    # Hallazgos copiados tal cual, y cada valor clave con su etiqueta.
+    # Fase 24: SQL de referencia, resultado crudo, hallazgos tal cual y cada
+    # valor clave escalar con su etiqueta (las listas ya están en el resultado).
+    assert f"SQL de referencia: {' '.join(r.consultas[0].sql.split())}" in texto
+    assert "Resultado de referencia:" in texto
     for h in r.hallazgos:
         assert h in texto
     for v in r.valores_clave:
-        assert f"- {v.etiqueta}: " in texto
-    # La pregunta es la constante PREGUNTA de src.analytics (r.pregunta).
+        assert (f"- {v.etiqueta}: " in texto) != isinstance(v.valor, list)
+    # La pregunta es la de la definición de la necesidad (r.pregunta).
     assert ij.PREGUNTAS[nid] == r.pregunta
 
 

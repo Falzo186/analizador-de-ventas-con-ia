@@ -10,21 +10,18 @@ import math
 
 import pytest
 
-from src.analytics.registro import NECESIDADES, NECESITA_AGREGADO
+from src.analytics.registro import NECESIDADES
 from tests.helpers_analytics import construir_fixture, abrir
 
 
 @pytest.fixture(scope="module")
 def resultados(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("contrato")
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     con = abrir(src)
     out = {}
     for nid, fn in NECESIDADES.items():
-        if nid in NECESITA_AGREGADO:
-            out[nid] = fn(con, agg)
-        else:
-            out[nid] = fn(con)
+        out[nid] = fn(con)
     con.close()
     return out
 

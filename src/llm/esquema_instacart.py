@@ -11,7 +11,7 @@ columnas y tipos, `COUNT(*)` para el tamaño, y `SELECT ... LIMIT 3` para
 filas de ejemplo reales.
 
 Caché: mismo patrón de `huella_bd` que `src.dashboard.servicio` (Fase 3) /
-`agregados.abrir_agregado` (Fase 2A) para detectar un agregado "rancio" --
+el agregado de la Fase 2A (retirado en la Fase 24) para detectar un dato "rancio" --
 aquí, una descripción de esquema desactualizada. Se guarda en
 `data/cache/esquema_instacart.json` junto con la `huella_bd` que tenía la
 BD al construirse y el texto de `REGLAS_DE_NEGOCIO`; si ambos coinciden, se

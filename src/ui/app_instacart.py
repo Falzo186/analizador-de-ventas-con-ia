@@ -1,5 +1,5 @@
-"""App de Instacart: chat con la IA local y dashboard de las 11
-necesidades, en vista alternante estilo Claude.ai (Fase 8).
+"""App de Instacart: chat con la IA local y dashboard de las 10
+necesidades (Fase 24), en vista alternante estilo Claude.ai (Fase 8).
 
 Para correrla:
 
@@ -21,7 +21,7 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   `render_panel` (Fases 3 y 4, sobre `src.dashboard.servicio`).
 - Layout (Fase 8): arriba del área principal hay dos íconos, 💬 y 📊, que
   alternan qué vista ocupa todo el ancho (`st.session_state["vista"]`). La
-  barra lateral lista las 11 necesidades como "fijados": un clic abre el
+  barra lateral lista las 10 necesidades como "fijados": un clic abre el
   dashboard con esa necesidad seleccionada, usando la misma clave que el
   selector del dashboard (`necesidad_sel`).
 - Cambiar de vista es un rerun completo. Si hay una pregunta en proceso, la
@@ -33,7 +33,7 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   pendiente.
 - Entrega del curso (Fase 10): en la vista de dashboard, el expander
   «📋 Entrega» corre el MISMO pipeline del chat con la pregunta fija de
-  N1, N2, N4, N9 y N11 y ofrece el resultado como `{Nx}_ia.json`
+  cada una de las 10 necesidades y ofrece el resultado como `{Nx}_ia.json`
   (`src.llm.formato_entrega`). No toca el chat normal.
 - Iteraciones con juez IA (Fase 11): en ⚙️, «Cantidad de iteraciones»
   (default 5) y los modelos pequeño y grande; en la vista de dashboard, el
@@ -86,11 +86,9 @@ VISTA_CHAT = "chat"
 VISTA_DASHBOARD = "dashboard"
 #: Clave de session_state del selector del dashboard (`dashboard.render_controles`).
 CLAVE_NECESIDAD = "necesidad_sel"
-#: Título corto de cada necesidad: la constante TITULO de su módulo en
-#: src/analytics, el mismo texto del título del panel (`r.titulo`).
-TITULOS_NECESIDADES = {
-    nid: sys.modules[fn.__module__].TITULO for nid, fn in registro.NECESIDADES.items()
-}
+#: Título corto de cada necesidad: el `titulo` de su definición en
+#: src.analytics.necesidades, el mismo texto del título del panel (`r.titulo`).
+TITULOS_NECESIDADES = {nid: registro.definicion(nid).titulo for nid in registro.NECESIDADES}
 
 #: Fase 9: nivel de esfuerzo -> timeout (s) de CADA llamada al modelo
 #: (SQL, respuesta). Referencias: medias del benchmark de la Fase 5 (SQL /
@@ -425,7 +423,8 @@ AVISO_ENTREGA_IA = (
 def render_entrega_ia() -> None:
     entregas = st.session_state.setdefault(CLAVE_ENTREGAS_IA, {})
     en_curso = bool(st.session_state.get("pregunta_en_curso"))
-    with st.expander("📋 Entrega: JSON de la IA para las 5 necesidades", expanded=bool(entregas)):
+    with st.expander(f"📋 Entrega: JSON de la IA para las {len(formato_entrega.NECESIDADES_ENTREGA)} necesidades",
+                     expanded=bool(entregas)):
         st.info(AVISO_ENTREGA_IA, icon="ℹ️")
         config = config_actual()
         st.caption(f"Modelo: `{config['modelo']}` · esfuerzo {config['esfuerzo']} (⚙️ arriba para cambiarlo). "
@@ -483,9 +482,10 @@ AVISO_ITERACIONES = (
 )
 AVISO_MODO = {
     ij.MODO_AUTOCORRECCION: (
-        "**Modo autocorrección:** desde el intento 2, cada intento recibe el SQL, el resultado (o error), "
-        "la redacción y el veredicto del juez del intento anterior **del mismo modelo**. Mide si el modelo "
-        "**converge** a la respuesta correcta cuando se le dice en qué falló (no su variabilidad)."
+        "**Modo autocorrección:** desde el intento 2, cada intento recibe del intento anterior **del mismo "
+        "modelo** su SQL, el error exacto o la forma del resultado (filas y columnas), un chequeo de forma "
+        "automático, el veredicto y el **diagnóstico del enfoque** del juez, saneado: nunca un valor de la "
+        "referencia. Mide si el modelo **converge** a la respuesta correcta cuando se le dice en qué falló."
     ),
     ij.MODO_INDEPENDIENTE: (
         "**Modo independiente:** cada intento parte de cero (misma pregunta, sin ver los anteriores). "
@@ -538,8 +538,23 @@ def render_iteracion(it: ij.Iteracion) -> None:
                     st.caption(f"Segunda redacción (también descartada): {it.segunda_redaccion}")
         else:
             st.error(it.error, icon="⚠️")
+        if it.chequeo_forma:
+            st.markdown(f"**Chequeo automático de forma** (intento {it.numero} de {it.total}): "
+                        + " ".join(it.chequeo_forma))
         st.markdown(f"**Juez** (intento {it.numero} de {it.total}): {_ICONOS_VEREDICTO[it.veredicto]} "
                     f"{it.veredicto} — {it.justificacion}")
+        if it.origen_veredicto == ij.ORIGEN_JUEZ:
+            st.caption("☝️ Comparación con la referencia: puede citarla, por eso NUNCA se pasa al modelo.")
+        if it.diagnostico is not None:
+            st.markdown(f"**Diagnóstico del enfoque** (lo que recibe el intento siguiente): "
+                        f"{it.diagnostico_retro or '(vacío)'}")
+            if it.oraciones_omitidas:
+                st.caption(f"Se omitieron {it.oraciones_omitidas} oración(es) por citar valores de la referencia. "
+                           f"Diagnóstico crudo del juez: {it.diagnostico}")
+        if it.coincide_referencia is not None:
+            st.caption(("✅ Coincide" if it.coincide_referencia else "✖️ No coincide")
+                       + f" con la referencia según el chequeo automático ({it.detalle_coincidencia}); "
+                       "es informativo, no se pasa al modelo.")
         st.caption(
             f"Intentos de SQL: {it.intentos_sql} · veredicto: {it.origen_veredicto} · "
             f"pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_s:.1f} s"
@@ -554,6 +569,11 @@ def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
                    help="Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo.")
         col.caption(f"{r.correctas} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
                     f"{r.sin_veredicto} sin veredicto (de {r.n} registradas de {corrida.n_iteraciones})")
+        col.caption(("Primer «correcta»: intento " + str(r.primer_correcto)) if r.primer_correcto
+                    else "Ningún intento «correcta».")
+        col.caption(f"Chequeo automático: {r.coincidencias} de {r.n} coinciden con la referencia"
+                    + (f" (la primera, en el intento {r.primera_coincidencia})" if r.primera_coincidencia else "")
+                    + ".")
         col.caption("Secuencia: " + " → ".join(
             f"{it.numero}{_ICONOS_VEREDICTO[it.veredicto]}" for it in corrida.de_modelo(r.modelo)))
 
@@ -595,8 +615,8 @@ def render_iteraciones(necesidad: str) -> None:
         referencia = _referencia_texto(necesidad, corrida)
         if referencia is not None:
             with st.container(border=True):
-                st.markdown(f"**Respuesta de referencia (correcta)** — hallazgos y valores clave de "
-                            f"`data/referencia/{necesidad}.json`; es lo que ve el juez:")
+                st.markdown(f"**Respuesta de referencia (correcta)** — SQL, resultado, redacción y valores clave "
+                            f"de `data/referencia/{necesidad}.json`; es lo que ve el juez (nunca el modelo):")
                 st.text(referencia)
         st.caption(f"{cfg['iteraciones']} iteraciones × {len(modelos)} modelo(s): `{'`, `'.join(modelos)}` · "
                    f"modo {ETIQUETAS_MODO[cfg['modo']].lower()} · esfuerzo {cfg['esfuerzo']} (⚙️ arriba para cambiarlo).")

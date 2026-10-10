@@ -36,9 +36,9 @@ def huella_bd(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     """Conteos que identifican de forma reproducible el contenido de la BD fuente.
 
     Se usa para (a) documentar la "huella de la BD" que pide el contrato de
-    cada `ResultadoNecesidad`, y (b) para que `agregados.py` pueda detectar un
-    agregado "rancio" si estos conteos ya no coinciden con los que tenía al
-    construirse.
+    cada `ResultadoNecesidad`, y (b) para que `src.dashboard.servicio` y la
+    caché del esquema detecten un JSON "rancio" si estos conteos ya no
+    coinciden con los que tenía al calcularse.
     """
     orders_total, orders_test = con.execute(
         "SELECT COUNT(*), COUNT(*) FILTER (WHERE eval_set = 'test') FROM orders"

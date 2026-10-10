@@ -19,15 +19,13 @@ RUTA_DASHBOARD = "src/ui/dashboard.py"
 
 @pytest.fixture()
 def app(tmp_path, monkeypatch):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     out_dir = tmp_path / "referencia"
     out_pdf = tmp_path / "pdf" / "reporte.pdf"
 
     monkeypatch.setattr(servicio, "DB_PATH_DEFAULT", src)
-    monkeypatch.setattr(servicio, "AGG_PATH_DEFAULT", agg)
     monkeypatch.setattr(servicio, "OUT_DIR_DEFAULT", out_dir)
     monkeypatch.setattr(pdf_generador, "DB_PATH_DEFAULT", src)
-    monkeypatch.setattr(pdf_generador, "AGG_PATH_DEFAULT", agg)
     monkeypatch.setattr(pdf_generador, "OUT_DIR_DEFAULT", out_dir)
     monkeypatch.setattr(pdf_generador, "OUT_PDF_DEFAULT", out_pdf)
     monkeypatch.setattr(pdf_generador, "RAW_DIR_DEFAULT", Path("data/instacart/raw"))
@@ -72,7 +70,7 @@ def test_boton_respeta_forzar_pdf_solo_si_se_marca(app):
     # dejar el PDF "vigente" según pdf_vigente() -- lo comprobamos llamando
     # directamente a la función (más preciso que parsear el texto de la UI).
     vigente = pdf_generador.pdf_vigente(
-        out_pdf, db_path=servicio.DB_PATH_DEFAULT, agg_path=servicio.AGG_PATH_DEFAULT,
+        out_pdf, db_path=servicio.DB_PATH_DEFAULT, 
         out_dir=servicio.OUT_DIR_DEFAULT,
     )
     assert vigente

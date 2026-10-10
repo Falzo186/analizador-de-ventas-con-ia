@@ -11,12 +11,18 @@ Regla de caché: cada JSON de `data/referencia/` ya incluye el campo
 `order_products__train` en el momento en que se calculó, ver
 `src.analytics.contrato.HuellaBD`). `cargar_necesidad()` compara ese
 `huella_bd` guardado contra `huella_bd(con)` recién medido sobre la BD
-fuente actual (el mismo mecanismo que ya usa `agregados.abrir_agregado()`
-para detectar un agregado "rancio", ver `docs/FASE2B_REPORTE.md`). Si
+fuente actual (el mecanismo de "caché rancia" de la Fase 2B, ver
+`docs/FASE2B_REPORTE.md`). Si
 coinciden, el JSON es la fuente de verdad y no se ejecuta ninguna consulta
-analítica pesada (N10/N11 miden hasta 6-8s en el peor caso medido en
-Fase 2B: no pueden correr en cada render de Streamlit). Si no coinciden (o
+analítica (la más lenta, N2, mide ~5 s con `threads=1`: no puede correr
+en cada render de Streamlit). Si no coinciden (o
 el archivo no existe), se recalcula con `invocar()` y se reescribe el JSON.
+
+Fase 24: además de la huella de la BD, el JSON debe corresponder a la
+definición ACTUAL de la necesidad (`pregunta` y SQL de referencia de
+`src.analytics.necesidades`). Al reemplazar las 11 necesidades viejas por
+las 10 nuevas, la BD no cambió, así que solo con la huella se habría servido
+el `N1.json` viejo como si fuera el N1 nuevo.
 
 Nota de nombres: el enunciado de esta fase describe la condición de caché
 como "su huella_contenido coincide con la huella actual de la BD"; el
@@ -41,10 +47,9 @@ import duckdb
 
 from src.analytics.conexion import abrir_conexion, huella_bd
 from src.analytics.contrato import ResultadoNecesidad
-from src.analytics.registro import NECESIDADES, invocar
+from src.analytics.registro import NECESIDADES, definicion, invocar
 
 DB_PATH_DEFAULT = Path("data/instacart.duckdb")
-AGG_PATH_DEFAULT = Path("data/instacart_agg.duckdb")
 OUT_DIR_DEFAULT = Path("data/referencia")
 
 CAMPOS_HUELLA_BD = ("orders_total", "orders_test", "order_products_prior", "order_products_train")
@@ -108,26 +113,32 @@ def _huella_de_json(data: dict) -> dict[str, int] | None:
         return None
 
 
-def _cache_vigente(data: dict | None, huella_actual: dict[str, int]) -> bool:
+def _definicion_vigente(data: dict, nid: str) -> bool:
+    """El JSON es de la definición actual de `nid`: misma pregunta y mismo
+    SQL de referencia (Fase 24)."""
+    d = definicion(nid)
+    consultas = data.get("consultas") or []
+    return data.get("pregunta") == d.pregunta and [c.get("sql") for c in consultas] == [d.sql()]
+
+
+def _cache_vigente(data: dict | None, huella_actual: dict[str, int], nid: str) -> bool:
     if data is None:
         return False
-    return _huella_de_json(data) == huella_actual
+    return _huella_de_json(data) == huella_actual and _definicion_vigente(data, nid)
 
 
 def cargar_necesidad(
     necesidad_id: str,
     *,
     db_path: Path | None = None,
-    agg_path: Path | None = None,
     out_dir: Path | None = None,
     con: duckdb.DuckDBPyConnection | None = None,
 ) -> CargaNecesidad:
     """Carga una necesidad, sirviendo desde `data/referencia/{id}.json`
     cuando su `huella_bd` coincide con la de la BD fuente actual.
 
-    `db_path`/`agg_path`/`out_dir` en `None` (el default) se resuelven en
-    el momento de la llamada contra `DB_PATH_DEFAULT`/`AGG_PATH_DEFAULT`/
-    `OUT_DIR_DEFAULT` del módulo -- a propósito, para que un test pueda
+    `db_path`/`out_dir` en `None` (el default) se resuelven en el momento
+    de la llamada contra `DB_PATH_DEFAULT`/`OUT_DIR_DEFAULT` del módulo -- a propósito, para que un test pueda
     monkeypatchear esos globales (p. ej. apuntando a una fixture chica en
     `tmp_path`) y que tanto llamadas directas como las que hace
     `src/ui/dashboard.py` (que nunca pasa estos argumentos) usen la ruta
@@ -135,13 +146,12 @@ def cargar_necesidad(
     definir la función.
 
     `con`: conexión ya abierta opcional (para pruebas, o para que
-    `refrescar_todas()` reuse una sola conexión en vez de abrir 11). Si no
+    `refrescar_todas()` reuse una sola conexión en vez de abrir 10). Si no
     se pasa, se abre una de solo lectura y se cierra al terminar.
     """
     if necesidad_id not in NECESIDADES:
         raise ValueError(f"Necesidad desconocida: {necesidad_id}. Disponibles: {sorted(NECESIDADES)}")
     db_path = db_path if db_path is not None else DB_PATH_DEFAULT
-    agg_path = agg_path if agg_path is not None else AGG_PATH_DEFAULT
     out_dir = out_dir if out_dir is not None else OUT_DIR_DEFAULT
 
     t_inicio = time.perf_counter()
@@ -153,7 +163,7 @@ def cargar_necesidad(
         con = abrir_conexion(db_path)
     try:
         huella_actual = huella_bd(con)
-        if _cache_vigente(data_en_disco, huella_actual):
+        if _cache_vigente(data_en_disco, huella_actual, necesidad_id):
             resultado = ResultadoNecesidad.desde_dict(data_en_disco)
             return CargaNecesidad(
                 resultado=resultado,
@@ -161,7 +171,7 @@ def cargar_necesidad(
                 duracion_carga_s=time.perf_counter() - t_inicio,
             )
 
-        resultado = invocar(necesidad_id, con, agg_path)
+        resultado = invocar(necesidad_id, con)
         resultado.guardar_json(ruta)
         return CargaNecesidad(
             resultado=resultado,
@@ -177,22 +187,20 @@ def refrescar_todas(
     *,
     forzar: bool = False,
     db_path: Path | None = None,
-    agg_path: Path | None = None,
     out_dir: Path | None = None,
     al_terminar_cada_una: Callable[[EstadoNecesidad], None] | None = None,
 ) -> ResumenRefresco:
-    """Recorre las 11 necesidades con UNA sola conexión. `forzar=True`
-    ignora la caché y recalcula las 11 (usado por la prueba de
+    """Recorre las 10 necesidades con UNA sola conexión. `forzar=True`
+    ignora la caché y recalcula las 10 (usado por la prueba de
     concurrencia y por el botón "Actualizar datos" de la UI cuando el
     usuario pide un refresco explícito); `forzar=False` solo recalcula
     las que estén ausentes o rancias. `al_terminar_cada_una`, si se pasa,
     se invoca después de cada necesidad (recalculada o no) para que la UI
-    pueda mostrar progreso incremental sin esperar a que terminen las 11.
+    pueda mostrar progreso incremental sin esperar a que terminen las 10.
 
-    `db_path`/`agg_path`/`out_dir` en `None` se resuelven en el momento de
-    la llamada (mismo motivo que en `cargar_necesidad`)."""
+    `db_path`/`out_dir` en `None` se resuelven en el momento de la llamada
+    (mismo motivo que en `cargar_necesidad`)."""
     db_path = db_path if db_path is not None else DB_PATH_DEFAULT
-    agg_path = agg_path if agg_path is not None else AGG_PATH_DEFAULT
     out_dir = out_dir if out_dir is not None else OUT_DIR_DEFAULT
     t_inicio_total = time.perf_counter()
     resumen = ResumenRefresco()
@@ -200,15 +208,15 @@ def refrescar_todas(
     con = abrir_conexion(db_path)
     try:
         huella_actual = huella_bd(con)
-        for nid in sorted(NECESIDADES):
+        for nid in NECESIDADES:
             t_inicio = time.perf_counter()
             ruta = _ruta_json(nid, out_dir)
             try:
                 data_en_disco = None if forzar else _leer_json_si_existe(ruta)
-                if not forzar and _cache_vigente(data_en_disco, huella_actual):
+                if not forzar and _cache_vigente(data_en_disco, huella_actual, nid):
                     estado = EstadoNecesidad(id=nid, recalculada=False, duracion_s=time.perf_counter() - t_inicio)
                 else:
-                    resultado = invocar(nid, con, agg_path)
+                    resultado = invocar(nid, con)
                     resultado.guardar_json(ruta)
                     estado = EstadoNecesidad(id=nid, recalculada=True, duracion_s=time.perf_counter() - t_inicio)
             except Exception as exc:  # noqa: BLE001 - una necesidad no debe tumbar el refresco de las demás
@@ -229,9 +237,9 @@ def refrescar_todas(
 # Fase 10 (entregable de curso): descarga individual del JSON determinista
 # ---------------------------------------------------------------------------
 
-#: Necesidades seleccionadas para la entrega del curso. Las otras 6 siguen
-#: en el dashboard normal, pero no tienen descarga individual ni JSON de IA.
-NECESIDADES_ENTREGA: tuple[str, ...] = ("N1", "N2", "N4", "N9", "N11")
+#: Necesidades de la entrega del curso (descarga individual + JSON de IA).
+#: Fase 24: las 10 (antes, 5 de las 11 viejas: N1, N2, N4, N9 y N11).
+NECESIDADES_ENTREGA: tuple[str, ...] = tuple(NECESIDADES)
 
 
 @dataclass

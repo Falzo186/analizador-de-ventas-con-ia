@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from src.analytics.registro import NECESIDADES, NECESITA_AGREGADO
+from src.analytics.registro import NECESIDADES
 from tests.helpers_analytics import construir_fixture, abrir
 
 
@@ -29,15 +29,15 @@ def _sin_volatiles(resultado) -> dict:
 
 @pytest.mark.parametrize("nid", sorted(NECESIDADES))
 def test_determinismo_dos_corridas(nid, tmp_path):
-    src, agg = construir_fixture(tmp_path)
+    src = construir_fixture(tmp_path)
     fn = NECESIDADES[nid]
 
     con1 = abrir(src)
-    r1 = fn(con1, agg) if nid in NECESITA_AGREGADO else fn(con1)
+    r1 = fn(con1)
     con1.close()
 
     con2 = abrir(src)
-    r2 = fn(con2, agg) if nid in NECESITA_AGREGADO else fn(con2)
+    r2 = fn(con2)
     con2.close()
 
     d1, d2 = r1.a_dict(), r2.a_dict()
