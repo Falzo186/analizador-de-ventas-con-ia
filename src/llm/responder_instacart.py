@@ -64,9 +64,11 @@ from src.llm.safety_instacart import (
 DB_PATH_DEFAULT = Path("data/instacart.duckdb")
 MAX_FILAS_AL_MODELO = 25
 
-#: Timeouts de cada llamada al modelo. qwen2.5-coder:1.5b (default) midió
-#: 2.9s de media para la llamada de SQL y 2.5s para la de respuesta en el
-#: benchmark (docs/FASE5_REPORTE.md): 30s deja un margen de ~10x.
+#: Timeouts de cada llamada al modelo. El default original, qwen2.5-coder:1.5b,
+#: midió 2.9s de media para la llamada de SQL y 2.5s para la de respuesta en
+#: el benchmark (docs/FASE5_REPORTE.md). El default actual, llama3.1:8b
+#: (Fase 19, ver docs/CLASIFICACION_FALLOS.md), midió ~1.1s y ~0.9s -- ambos
+#: muy por debajo de este límite: 30s deja margen de sobra para los dos.
 TIMEOUT_LLM_SQL_S = 30.0
 TIMEOUT_LLM_RESPUESTA_S = 30.0
 

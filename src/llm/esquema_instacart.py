@@ -71,7 +71,51 @@ REGLAS DE NEGOCIO (obligatorias, no las repitas como si fueran una pregunta del 
   usuario con datos de entrenamiento).
 - No existe ninguna fecha real (ni de calendario ni de "hoy"): no asumas
   ni inventes un calendario. Todo lo temporal en este dataset es relativo
-  (order_number, days_since_prior_order), nunca una fecha absoluta."""
+  (order_number, days_since_prior_order), nunca una fecha absoluta.
+- products.aisle_id y products.department_id son LLAVES FORÁNEAS, no el
+  nombre del pasillo/departamento. products NO tiene una columna "aisle" ni
+  "department" con el texto -- esos nombres están en aisles.aisle y
+  departments.department. Para responder con el NOMBRE del pasillo o
+  departamento, siempre debes hacer JOIN explícito: products.aisle_id =
+  aisles.aisle_id y products.department_id = departments.department_id.
+  NUNCA escribas aisles.* ni departments.* en una consulta que no las haya
+  unido con un JOIN a esa tabla (es un error de "tabla no referenciada" que
+  ya se vio con modelos reales en este proyecto). aisle_id/department_id
+  viven en products, NUNCA en order_products/__prior/__train: si la
+  pregunta mezcla pedidos con pasillo o departamento, la cadena de JOIN
+  SIEMPRE pasa por products primero:
+    FROM order_products op
+    JOIN products p ON op.product_id = p.product_id
+    JOIN aisles a ON p.aisle_id = a.aisle_id
+    JOIN departments d ON p.department_id = d.department_id
+  (quita las dos últimas líneas si la pregunta no pide pasillo/departamento).
+  NUNCA pongas aisle_id/department_id directamente en el JOIN con
+  order_products: esa columna no existe ahí.
+- "reordenado" / "reordered = 1" se refiere SOLO a las líneas de pedido
+  donde reordered = 1 (el usuario ya había comprado ese producto antes). Si
+  la pregunta dice "productos reordenados", "veces reordenado" o "líneas
+  reordenadas", filtra explícitamente por reordered = 1 -- NO cuentes todas
+  las líneas de order_products sin ese filtro (eso cuenta compras nuevas y
+  repetidas por igual, una respuesta distinta a lo que se preguntó). Y
+  sigue aplicando la regla anterior sobre order_products: usa la VISTA
+  order_products (prior+train), no solo order_products__train, salvo que la
+  pregunta pida distinguir "prior" de "train" explícitamente.
+- "promedio de líneas/productos por pedido" (o "por pasillo", "por
+  departamento", "por usuario"...) es un promedio de DOS PASOS, NUNCA
+  AVG() de una sola columna. PRIMERO cuenta las líneas de cada grupo con
+  GROUP BY, DESPUÉS promedia esos conteos en una subconsulta. La forma es
+  SIEMPRE esta (adapta solo la columna de agrupación y los JOIN si hace
+  falta llegar a ella, p. ej. pasando por products para agrupar por
+  aisle_id):
+    SELECT AVG(n) FROM (
+      SELECT <columna_del_grupo>, COUNT(*) AS n
+      FROM order_products
+      GROUP BY <columna_del_grupo>
+    ) sub
+  NUNCA escribas AVG(product_id), AVG(order_id), AVG(aisle_id) ni
+  AVG(add_to_cart_order) -- promediar directamente una columna de ID (o
+  cualquier columna que no sea el conteo "n" de la subconsulta) no es el
+  promedio que se preguntó, aunque la consulta corra sin error."""
 
 
 def _tablas_y_vistas(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str]]:

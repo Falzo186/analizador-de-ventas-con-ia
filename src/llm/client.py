@@ -20,12 +20,20 @@ from collections.abc import Iterator
 import httpx
 import ollama
 
-#: Modelo por defecto (Fase 5), elegido con datos en
-#: scripts/benchmark_modelos_llm.py (único de los 3 que rechazó las 2
-#: preguntas trampa, 0 timeouts, 1.3GB de RSS contra 9.7GB de
-#: qwen2.5-coder:14b); ver docs/FASE5_REPORTE.md. Se cambia con la variable
-#: de entorno VENTIA_LLM_MODELO_INSTACART.
-MODELO_POR_DEFECTO_INSTACART = "qwen2.5-coder:1.5b"
+#: Modelo por defecto. Elegido originalmente en la Fase 5 (qwen2.5-coder:1.5b;
+#: ver docs/FASE5_REPORTE.md) por tasa de SQL válido, rechazo de trampas y RSS
+#: bajo -- esos criterios no medían si la respuesta era SEMÁNTICAMENTE
+#: correcta. La Fase 11-18 agregó un oráculo de referencia
+#: (scripts/benchmark_modelos_llm.py, docs/CLASIFICACION_FALLOS.md) y con esa
+#: métrica qwen2.5-coder:1.5b solo acertaba 10/12 (83%) de las preguntas
+#: evaluables, contra 12/12 (100%) de llama3.1:8b y de qwen2.5-coder:latest
+#: (7B) -- ambos con un costo medido de solo +0.4s por pregunta y +4GB de
+#: RAM/VRAM en esta máquina (16GB RAM libre, 5.7GB VRAM libre), ver "Fase 18"
+#: en docs/CLASIFICACION_FALLOS.md. Se cambió a llama3.1:8b (Fase 19) por ser
+#: el más rápido de los dos con 100%. Se cambia con la variable de entorno
+#: VENTIA_LLM_MODELO_INSTACART (útil para volver a qwen2.5-coder:1.5b en una
+#: máquina sin GPU o con poca RAM).
+MODELO_POR_DEFECTO_INSTACART = "llama3.1:8b"
 
 
 class LlmNoDisponible(RuntimeError):

@@ -137,3 +137,52 @@ def test_cache_sin_campo_reglas_se_reconstruye(con, tmp_path):
     ruta_cache.write_text(json.dumps(datos), encoding="utf-8")
 
     assert "PRE-HOTFIX" not in construir_descripcion_esquema(con, cache_path=ruta_cache)
+
+
+# ---------------------------------------------------------------------------
+# Fase 12: reglas agregadas tras ver, en una corrida real contra Ollama
+# (docs/evidencia/benchmark_fase11d_prueba.json), que el modelo confundía
+# el JOIN de pasillo/departamento y el filtro de "reordenado".
+# ---------------------------------------------------------------------------
+
+def test_regla_aisle_department_exige_join_explicito():
+    """Un modelo real escribió `GROUP BY departments.department` sin haber
+    unido esa tabla -> Binder Error 'Referenced table "departments" not
+    found!' (ver docs/evidencia/benchmark_fase11d_prueba.json)."""
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    aplanado = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert "LLAVES FORÁNEAS" in aplanado
+    assert "JOIN explícito" in aplanado
+
+
+def test_regla_reordered_exige_filtrar_por_1():
+    """Un modelo real contó TODAS las líneas de order_products para "top 5
+    de productos con más veces reordenados" sin filtrar reordered = 1
+    (mismo JSON de evidencia) -- SQL válido, respuesta incorrecta.
+
+    Compara contra el texto con espacios/saltos de línea colapsados: la
+    regla se reenvuelve de vez en cuando (p. ej. al agregar una frase) y un
+    `in` literal se rompe cada vez que la frase buscada cae justo en un
+    salto de línea del párrafo -- ya pasó una vez (Fase 13). La redacción
+    exacta de la regla no es lo que importa aquí, solo que el contenido
+    esté."""
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    aplanado = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert "reordered = 1" in aplanado
+    assert "NO cuentes todas las líneas" in aplanado
+
+
+def test_regla_promedio_de_dos_pasos_trae_ejemplo_literal_de_subconsulta():
+    """Fase 16: en las Fases 14-15, tres modelos (1.5B, 7B y 8B) fallaron
+    el mismo patrón -- `AVG(product_id)`, `AVG(order_id)`,
+    `AVG(add_to_cart_order)` -- para preguntas de "promedio de líneas por
+    pedido/pasillo". Se confirmó que las reglas no tenían NINGÚN ejemplo
+    de subconsulta (grep por "FROM (", "sub", "AVG" en todo src/llm/ sin
+    resultados relevantes), y el ejemplo literal de JOIN de la Fase 14 sí
+    funcionó para ese otro problema -- de ahí la hipótesis de agregar un
+    ejemplo literal también para el promedio de dos pasos."""
+    from src.llm.esquema_instacart import REGLAS_DE_NEGOCIO
+    aplanado = " ".join(REGLAS_DE_NEGOCIO.split())
+    assert "DOS PASOS" in aplanado
+    assert "GROUP BY <columna_del_grupo>" in aplanado
+    assert "NUNCA escribas AVG(product_id)" in aplanado
