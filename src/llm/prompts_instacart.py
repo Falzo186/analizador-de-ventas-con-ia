@@ -229,3 +229,52 @@ def prompt_juez_instacart(
         "INTENTO DEL ASISTENTE (a evaluar):\n" + "\n\n".join(intento)
     )
     return _SISTEMA_JUEZ, usuario
+
+
+#: Fase 25: el juez ya NO decide si el intento está bien o mal (lo decide el
+#: chequeo automático contra la referencia, `src.llm.retroalimentacion`);
+#: solo se le llama cuando el intento ya falló, para que explique POR QUÉ.
+#: A propósito sin frases de ejemplo literales: en la Fase 24 el juez copió
+#: tal cual un ejemplo de su prompt como diagnóstico de un caso al que no
+#: aplicaba.
+_SISTEMA_DIAGNOSTICO = """\
+Eres un evaluador. Un chequeo automático YA DETERMINÓ que el INTENTO de un
+asistente es INCORRECTO: el resultado de su SQL no coincide con el de la
+REFERENCIA, que es correcta (un programa determinista ejecutó el SQL de
+referencia sobre los mismos datos del dataset Instacart). No tienes que
+decidir si está bien o mal: está mal. Tu trabajo es explicar POR QUÉ, para
+que el asistente lo corrija en su próximo intento.
+
+Compara el SQL del intento con el SQL de referencia y su resultado con el de
+la referencia, y encuentra la diferencia de ENFOQUE que causa el error: una
+tabla o un JOIN que falta o sobra, una columna equivocada, un filtro de más
+o de menos, una agrupación distinta, otra métrica (otro conteo, otro
+promedio, otra división), otro orden, o un LIMIT. Sé concreto y nombra las
+columnas y tablas involucradas. No inventes errores: si una parte del
+intento ya está igual que en la referencia, no la critiques.
+
+Escribe DOS textos separados:
+1. "comparacion": qué diferencia hay entre el resultado del intento y el de
+   la referencia. Aquí SÍ puedes citar valores. NUNCA se le muestra al
+   asistente.
+2. "diagnostico_enfoque": la causa del error en una o dos frases, dirigida
+   al asistente. PROHIBIDO en este texto: cualquier cifra, nombre de
+   producto, pasillo o departamento, o valor del resultado de la referencia,
+   y copiar el SQL de referencia completo.
+
+Responde ÚNICAMENTE con un objeto JSON, sin texto adicional:
+{"comparacion": "<una o dos frases>", "diagnostico_enfoque": "<una o dos frases, sin valores de la referencia>"}
+"""
+
+
+def prompt_diagnostico_instacart(
+    pregunta: str, referencia: str, respuesta: str, *, sql_generado: str | None, resultado_generado: str | None,
+    detalle_chequeo: str,
+) -> tuple[str, str]:
+    """(sistema, usuario) del diagnóstico de la Fase 25: el mismo material que
+    `prompt_juez_instacart` más lo que el chequeo automático encontró que no
+    coincide (`detalle_chequeo`; puede citar la referencia: el juez ya la ve)."""
+    _, usuario = prompt_juez_instacart(pregunta, referencia, respuesta, sql_generado=sql_generado,
+                                       resultado_generado=resultado_generado)
+    usuario += f"\n\nCHEQUEO AUTOMÁTICO (ya decidido: INCORRECTO): {detalle_chequeo.strip()}"
+    return _SISTEMA_DIAGNOSTICO, usuario

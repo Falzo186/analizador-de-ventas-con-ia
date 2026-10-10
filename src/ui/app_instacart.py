@@ -475,17 +475,20 @@ ETIQUETAS_MODO = {
 AVISO_ITERACIONES = (
     "Corre la pregunta fija de esta necesidad **N veces con cada modelo** (pequeño y grande), por el "
     "mismo pipeline del chat (SQL de solo lectura, guardas, validación de cifras), con temperatura "
-    f"{ij.TEMPERATURA_ITERACIONES}. Después de cada intento, el mismo modelo actúa como **juez** "
-    f"(temperatura {ij.TEMPERATURA_JUEZ}) y compara la respuesta con la referencia del software "
-    "determinista (`data/referencia/{nid}.json`). Un intento cuyo pipeline falló cuenta como incorrecto "
-    "sin llamar al juez."
+    f"{ij.TEMPERATURA_ITERACIONES}. En **autocorrección**, el veredicto lo decide un **chequeo automático** "
+    "que compara el resultado del intento con el de la referencia del software determinista "
+    "(`data/referencia/{nid}.json`); el mismo modelo, como **juez** (temperatura "
+    f"{ij.TEMPERATURA_JUEZ}), solo explica por qué falló un intento fallido, y su opinión sobre cada intento "
+    "se muestra aparte, sin decidir nada. En **independientes**, el juez decide (como antes). Un intento "
+    "cuyo pipeline falló cuenta como incorrecto sin llamar al juez."
 )
 AVISO_MODO = {
     ij.MODO_AUTOCORRECCION: (
         "**Modo autocorrección:** desde el intento 2, cada intento recibe del intento anterior **del mismo "
         "modelo** su SQL, el error exacto o la forma del resultado (filas y columnas), un chequeo de forma "
-        "automático, el veredicto y el **diagnóstico del enfoque** del juez, saneado: nunca un valor de la "
-        "referencia. Mide si el modelo **converge** a la respuesta correcta cuando se le dice en qué falló."
+        "automático, el veredicto del **chequeo automático** y, si falló, el **diagnóstico del enfoque** del "
+        "juez, saneado: nunca un valor de la referencia. Mide si el modelo **converge** a la respuesta "
+        "correcta cuando se le dice en qué falló."
     ),
     ij.MODO_INDEPENDIENTE: (
         "**Modo independiente:** cada intento parte de cero (misma pregunta, sin ver los anteriores). "
@@ -541,17 +544,25 @@ def render_iteracion(it: ij.Iteracion) -> None:
         if it.chequeo_forma:
             st.markdown(f"**Chequeo automático de forma** (intento {it.numero} de {it.total}): "
                         + " ".join(it.chequeo_forma))
-        st.markdown(f"**Juez** (intento {it.numero} de {it.total}): {_ICONOS_VEREDICTO[it.veredicto]} "
-                    f"{it.veredicto} — {it.justificacion}")
-        if it.origen_veredicto == ij.ORIGEN_JUEZ:
-            st.caption("☝️ Comparación con la referencia: puede citarla, por eso NUNCA se pasa al modelo.")
+        if it.arbitro == ij.ARBITRO_CHEQUEO:
+            st.markdown(f"**Veredicto — chequeo automático contra la referencia** (intento {it.numero} de "
+                        f"{it.total}): {_ICONOS_VEREDICTO[it.veredicto]} {it.veredicto} — {it.justificacion}")
+            st.caption("☝️ El detalle puede citar la referencia: al modelo solo le llega el veredicto.")
+            if it.juez_veredicto is not None:
+                st.caption(f"⚖️ Opinión del juez-LLM (solo comparación, no decide nada): "
+                           f"{_ICONOS_VEREDICTO[it.juez_veredicto]} {it.juez_veredicto} — {it.juez_justificacion}")
+        else:
+            st.markdown(f"**Juez** (intento {it.numero} de {it.total}): {_ICONOS_VEREDICTO[it.veredicto]} "
+                        f"{it.veredicto} — {it.justificacion}")
+            if it.origen_veredicto == ij.ORIGEN_JUEZ:
+                st.caption("☝️ Comparación con la referencia: puede citarla, por eso NUNCA se pasa al modelo.")
         if it.diagnostico is not None:
             st.markdown(f"**Diagnóstico del enfoque** (lo que recibe el intento siguiente): "
                         f"{it.diagnostico_retro or '(vacío)'}")
             if it.oraciones_omitidas:
                 st.caption(f"Se omitieron {it.oraciones_omitidas} oración(es) por citar valores de la referencia. "
                            f"Diagnóstico crudo del juez: {it.diagnostico}")
-        if it.coincide_referencia is not None:
+        if it.coincide_referencia is not None and it.arbitro != ij.ARBITRO_CHEQUEO:
             st.caption(("✅ Coincide" if it.coincide_referencia else "✖️ No coincide")
                        + f" con la referencia según el chequeo automático ({it.detalle_coincidencia}); "
                        "es informativo, no se pasa al modelo.")
@@ -566,7 +577,8 @@ def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
     columnas = st.columns(len(resumen))
     for col, (etiqueta, r) in zip(columnas, zip(("Pequeño", "Grande"), resumen.values())):
         col.metric(f"{etiqueta}: {r.modelo}", f"{r.pct_correctas:.0f}% correctas",
-                   help="Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo.")
+                   help="Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo "
+                        f"(árbitro: {'chequeo automático' if corrida.arbitro == ij.ARBITRO_CHEQUEO else 'juez-LLM'}).")
         col.caption(f"{r.correctas} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
                     f"{r.sin_veredicto} sin veredicto (de {r.n} registradas de {corrida.n_iteraciones})")
         col.caption(("Primer «correcta»: intento " + str(r.primer_correcto)) if r.primer_correcto
@@ -576,6 +588,11 @@ def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
                     + ".")
         col.caption("Secuencia: " + " → ".join(
             f"{it.numero}{_ICONOS_VEREDICTO[it.veredicto]}" for it in corrida.de_modelo(r.modelo)))
+        if corrida.arbitro == ij.ARBITRO_CHEQUEO and r.juez_opiniones:
+            col.caption(f"⚖️ Juez-LLM (solo comparación): {r.juez_correctas} de {r.juez_opiniones} «correcta»; "
+                        f"de acuerdo con el chequeo en {r.juez_acuerdos} de {r.juez_opiniones} "
+                        f"({r.juez_falsos_negativos} correctos que el juez no dio por correctos, "
+                        f"{r.juez_falsos_positivos} incorrectos que dio por correctos).")
 
 
 def _referencia_texto(necesidad: str, corrida: ij.CorridaIteraciones | None) -> str | None:

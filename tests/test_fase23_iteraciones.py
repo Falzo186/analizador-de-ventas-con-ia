@@ -149,7 +149,9 @@ def test_autocorreccion_pasa_el_intento_anterior_al_siguiente(parchear):
                     "Filtras por order_dow y la pregunta no pide filtrar por día."),
               _juez("correcta", "coincide", "")],
     ))
-    corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=2, modo=ij.MODO_AUTOCORRECCION)
+    # Fase 24: el juez como árbitro (en la Fase 25 sigue disponible con arbitro="juez").
+    corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=2, modo=ij.MODO_AUTOCORRECCION,
+                                    arbitro=ij.ARBITRO_JUEZ)
     chico1, chico2, grande1, _ = corrida.iteraciones
 
     assert chico1.retroalimentacion is None
@@ -179,7 +181,8 @@ def test_autocorreccion_pasa_el_intento_anterior_al_siguiente(parchear):
 
 def test_autocorreccion_incluye_el_error_si_el_intento_fallo(parchear):
     parchear(ModeloIteraciones(sql=["DELETE FROM orders", SQL_OK]))
-    corrida = ij.correr_iteraciones("N3", modelos=["chico"], n=2, modo=ij.MODO_AUTOCORRECCION)
+    corrida = ij.correr_iteraciones("N3", modelos=["chico"], n=2, modo=ij.MODO_AUTOCORRECCION,
+                                    arbitro=ij.ARBITRO_JUEZ)
     primero, segundo = corrida.iteraciones
     assert not primero.ok
     assert f"Error (mensaje exacto): {primero.error}" in segundo.retroalimentacion

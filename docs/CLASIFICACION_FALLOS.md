@@ -498,3 +498,216 @@ mismo) y el modelo se quedó en 10.707.
   chat, ni la temperatura 0.5. En el CLI, el 14B se excluyó con `--grande -`.
 - Los marcadores `<!-- FASE23_14B -->`, `<!-- FASE23_PANEL -->` y `<!-- FASE23_PYTEST -->` de la sección de la
   Fase 23 siguen vacíos: son de esa fase y no se rellenaron aquí.
+
+## Fase 25 — El chequeo automático decide el veredicto; el juez-LLM solo diagnostica
+
+> Continúa sobre la Fase 24. Evidencia (ignorada por git): `docs/evidencia/fase25/{chequeo,juez}-r{1,2,3}/{llama3.1-8b,qwen2.5-coder-7b}/`
+> (`Nx_iteraciones_juez.{json,txt}` y `corrida.txt` por corrida). La corrida «juez r1» es la de la Fase 24
+> (`docs/evidencia/fase24/`).
+
+### 1. Por qué (evidencia de la Fase 24)
+
+Con el juez-LLM como árbitro (Fase 24, 10 necesidades × 5 intentos):
+- llama3.1:8b: el chequeo automático encontró **40/50** intentos que coinciden con la referencia; el juez marcó
+  «correcta» solo **4/50**. De los 46 intentos que juzgó, coincidió con el chequeo en 10: **36 falsos negativos**
+  (respuesta correcta que no dio por correcta) y **0 falsos positivos**.
+- qwen2.5-coder 7B: 36/50 según el chequeo, 23/50 según el juez; 13 falsos negativos, 0 falsos positivos.
+- El veredicto falso arrastraba un diagnóstico falso que sacaba al modelo de la respuesta correcta: llama N6
+  (correcto en el intento 4 → «falta excluir los 30» → 8.66 en el 5), llama N8 (✓ en el 2 → ✗ en el 3), qwen N6
+  (✓✓✓ y luego `eval_set = 'prior'`, reforzado por el juez).
+
+Como el juez nunca dio por correcto algo que estaba mal, pero sí lo contrario muchísimas veces, el veredicto
+binario del chequeo automático es estrictamente más confiable para decidir.
+
+### 2. El cambio
+
+**Quién decide (`arbitro`).** Nuevo parámetro de `nueva_corrida`/`correr_iteraciones`/CLI (`--arbitro`):
+- `"chequeo"` — **default en modo autocorrección**. Veredicto = `rf.coincide_con_referencia`: coincide →
+  «correcta», no → «incorrecta» (binario: el chequeo no tiene «parcial»). `origen_veredicto =
+  "chequeo_automatico"`, `justificacion` = el detalle del chequeo (puede citar la referencia; no pasa al modelo).
+- `"juez"` — el comportamiento de las Fases 11-24, intacto. Es el default del modo **independiente** (no se
+  tocó) y sirve, con `--arbitro juez`, para repetir la Fase 24 con el mismo código.
+
+**El juez-LLM se queda, en dos papeles separados** (con árbitro «chequeo»):
+1. **Diagnóstico** (`diagnosticar`, prompt nuevo `prompt_diagnostico_instacart`): **solo** si el chequeo dijo
+   que el intento falló. El prompt le dice que un chequeo automático **ya determinó** que es incorrecto, le pasa
+   el detalle de qué no coincide, y le pide únicamente la causa (`comparacion` + `diagnostico_enfoque`), **sin
+   veredicto**. El diagnóstico se sanea igual que en la Fase 24 (sin valores de la referencia). Si el chequeo dice
+   que acertó, no se llama: no hay nada que diagnosticar.
+2. **Medición** (`medir_juez`, default activo; `--sin-medir-juez` lo apaga): en cada intento que produjo
+   respuesta se le pide su veredicto con el **mismo prompt de la Fase 24**, a ciegas respecto del chequeo, solo
+   para seguir midiendo qué tan seguido se equivoca. Se guarda aparte (`juez_veredicto`, `juez_justificacion`,
+   `juez_origen`, `juez_crudo`, `duracion_juez_medicion_s`), **no decide nada y no se pasa al modelo**.
+
+Por qué dos llamadas y no una: el paso 1 de la fase pide seguir documentando cuánto se equivoca el juez, y su
+error principal es justamente sobre los intentos **correctos** (falsos negativos), que con el diseño del paso 2
+ya no se le muestran. Medirlo exige preguntarle también en esos, sin que su respuesta afecte nada.
+
+Si el pipeline no produjo respuesta (error de SQL, timeout), no se llama al juez en ningún papel: el error exacto
+de DuckDB sigue siendo la retroalimentación (Fase 24).
+
+**Qué recibe el intento siguiente** (`texto_retroalimentacion`, árbitro «chequeo»): lo mismo que en la Fase 24
+(SQL, error exacto o forma del resultado, chequeo de forma), con el veredicto rotulado «Veredicto (chequeo
+automático contra la respuesta correcta): …» y:
+- si falló: «Qué está mal en el enfoque, según el evaluador: <diagnóstico saneado>»;
+- si acertó: «Tu resultado coincide con la respuesta correcta: conserva el enfoque.» y nada más. El detalle del
+  chequeo (p. ej. «nombre sí, cifra no») **no** se pasa: diría qué parte del resultado ya era la correcta.
+
+**Panel y log.** La tarjeta de cada intento muestra «Veredicto — chequeo automático contra la referencia» (con
+su detalle) y, debajo, «⚖️ Opinión del juez-LLM (solo comparación, no decide nada)». El resumen por modelo agrega
+cuántos «correcta» dio el juez, en cuántos coincidió con el chequeo y sus falsos negativos/positivos
+(`ResumenModelo.juez_*`). El log (`a_texto`) dice el árbitro de la corrida y rotula cada veredicto igual.
+
+**Decisiones propias de esta fase:**
+- El prompt de diagnóstico **no tiene frases de ejemplo literales** (en la Fase 24 el juez de qwen copió tal cual
+  «te quedaste con el conteo absoluto en vez de dividir…» en un caso al que no aplicaba). Es un segundo cambio
+  respecto de la Fase 24 en los intentos fallidos: la comparación de abajo mide los dos juntos.
+- La cadena **no se corta** cuando un intento acierta: se corren los 5 intentos igual, para que las tablas sean
+  comparables con la Fase 24 y para medir si el modelo se mantiene en la respuesta correcta.
+- El chequeo evalúa el **resultado de la consulta**, no la redacción: un intento con el SQL correcto y una
+  redacción que redondea («10 productos» en vez de 10.11) cuenta como correcto. La validación de cifras del
+  pipeline (Fase 6) sigue protegiendo la redacción de cifras inventadas.
+- Se corrieron **3 repeticiones** por modelo y árbitro (la del juez r1 es la de la Fase 24), porque a temperatura
+  0.5 una sola corrida de 10 × 5 es ruidosa: con un solo par de corridas no se puede separar el efecto del
+  cambio del azar.
+
+### 3. Resultados reales: 10 necesidades × 5 intentos, autocorrección
+
+```
+python -m src.llm.iteraciones_juez todas --iteraciones 5 --modo autocorreccion --arbitro chequeo --pequeno llama3.1:8b --grande - --timeout 180 --out docs/evidencia/fase25/chequeo-r1/llama3.1-8b
+python -m src.llm.iteraciones_juez todas --iteraciones 5 --modo autocorreccion --arbitro chequeo --pequeno qwen2.5-coder:latest --grande - --timeout 180 --out docs/evidencia/fase25/chequeo-r1/qwen2.5-coder-7b
+```
+
+Repeticiones con `chequeo-r2/r3` y `--arbitro juez` en `juez-r2/r3`. «juez r1» es la Fase 24. Temperatura 0.5
+(juez 0.0), RTX 5060 8 GB, ~5 min por corrida de 50 intentos. Todas las coincidencias se recalcularon a partir de
+las filas guardadas, con la regla final de `rf.coincide_con_referencia` (la misma para las 12 corridas). El 14B
+no se tocó. Tablas completas: `docs/evidencia/fase25/comparacion.md`.
+
+**Comparación pedida: Fase 24 vs Fase 25, la primera corrida de cada una**
+
+| Modelo | | Necesidades que llegan a coincidir | Aciertan en el intento 1 | Coincidencias /50 | Regresiones ✓→✗ | Estables tras converger |
+|---|---|---|---|---|---|---|
+| llama3.1:8b | Fase 24 (árbitro juez) | 10/10 | 7/10 | 40/50 | 3 | 8/10 |
+| llama3.1:8b | Fase 25 (árbitro chequeo) | 9/10 | 6/10 | 37/50 | 4 | 6/9 |
+| qwen2.5-coder 7B | Fase 24 (árbitro juez) | 9/10 | 7/10 | 36/50 | 3 | 6/9 |
+| qwen2.5-coder 7B | Fase 25 (árbitro chequeo) | 7/10 | 7/10 | 35/50 | 0 | 7/7 |
+
+Chequeo por intento (✓ = coincide con la referencia):
+
+| Nec. | llama · Fase 24 | llama · Fase 25 | qwen · Fase 24 | qwen · Fase 25 |
+|---|---|---|---|---|
+| N1 | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✗ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+| N2 | 1✗ 2✗ 3✗ 4✗ 5✓ | 1✗ 2✗ 3✓ 4✗ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+| N3 | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+| N4 | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✗ 5✓ | 1✗ 2✗ 3✓ 4✓ 5✓ | 1✗ 2✗ 3✗ 4✗ 5✗ |
+| N5 | 1✗ 2✗ 3✓ 4✓ 5✓ | 1✗ 2✗ 3✗ 4✗ 5✗ | 1✗ 2✗ 3✗ 4✓ 5✓ | 1✗ 2✗ 3✗ 4✗ 5✗ |
+| N6 | 1✓ 2✓ 3✓ 4✓ 5✗ | 1✗ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✗ 5✗ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+| N7 | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+| N8 | 1✗ 2✓ 3✗ 4✓ 5✗ | 1✗ 2✓ 3✗ 4✓ 5✗ | 1✗ 2✗ 3✗ 4✗ 5✗ | 1✗ 2✗ 3✗ 4✗ 5✗ |
+| N9 | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+| N10 | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ | 1✓ 2✓ 3✗ 4✓ 5✓ | 1✓ 2✓ 3✓ 4✓ 5✓ |
+
+Con este solo par de corridas, la convergencia **baja** (llama 10 → 9, qwen 9 → 7). Lo que sí se ve es el efecto
+buscado sobre las regresiones de la Fase 24: qwen N6 (✓✓✓✗✗ → ✓✓✓✓✓) y qwen N1/N10 ya no pierden la respuesta.
+
+**Con 3 repeticiones por modelo y árbitro** (el acierto del intento 1 no depende del árbitro, porque el prompt
+del intento 1 es idéntico, así que su variación entre brazos mide el ruido: ±1 necesidad):
+
+| Modelo | Árbitro | Corridas | Necesidades que llegan a coincidir (media) | Aciertan en el 1 | Coincidencias /50 | Regresiones ✓→✗ | Estables tras converger |
+|---|---|---|---|---|---|---|---|
+| llama3.1:8b | juez | 3 | 9.0 (10, 8, 9) | 6.3 | 35.7 (40, 30, 37) | 4.0 | 59% |
+| llama3.1:8b | **chequeo** | 3 | **9.7** (9, 10, 10) | 6.3 | **38.7** (37, 40, 39) | 4.0 | **72%** |
+| qwen2.5-coder 7B | juez | 3 | **9.0** (9, 8, 10) | 7.7 | **40.0** (36, 39, 45) | 1.3 | 85% |
+| qwen2.5-coder 7B | chequeo | 3 | 8.0 (7, 8, 9) | 6.7 | 36.7 (35, 37, 38) | 1.0 | 88% |
+
+Transiciones entre intentos consecutivos (las 3 corridas juntas):
+
+| Modelo | Árbitro | Intento fallido que ejecutó → ✓ en el siguiente | Error de ejecución → ✓ | Intento ✓ → ✗ en el siguiente |
+|---|---|---|---|---|
+| llama3.1:8b | juez | 13/27 (48%) | 3/9 | 12/84 (14%) |
+| llama3.1:8b | chequeo | **19/29 (66%)** | 0/1 | 12/90 (13%) |
+| qwen2.5-coder 7B | juez | 4/23 (17%) | 2/2 | 4/95 (4%) |
+| qwen2.5-coder 7B | chequeo | 4/30 (13%) | 1/2 | 3/88 (3%) |
+
+Necesidades que llegan a coincidir, en cuántas de las 3 corridas (solo las que no son 3/3 en todos los casos):
+
+| Nec. | llama · juez | llama · chequeo | qwen · juez | qwen · chequeo |
+|---|---|---|---|---|
+| N4 | 3/3 | 3/3 | 3/3 | **1/3** |
+| N5 | 1/3 | 2/3 | 2/3 | 1/3 |
+| N8 | 3/3 | 3/3 | 1/3 | 1/3 |
+| N10 | 2/3 | 3/3 | 3/3 | 3/3 |
+
+**Transparencia del juez-LLM (medición aparte, árbitro «chequeo», 3 corridas):**
+
+| Modelo | Juez «correcta» | De acuerdo con el chequeo | Falsos negativos (✓ que el juez no dio por correcto) | Falsos positivos |
+|---|---|---|---|---|
+| llama3.1:8b | 4/148 | 36/148 (24%) | 112 | 0 |
+| qwen2.5-coder 7B | 66/146 | 102/146 (70%) | 44 | 0 |
+
+Igual que en la Fase 24: el juez **nunca** dio por correcto algo que estaba mal (0 falsos positivos en 294
+opiniones) y rechazó muchísimas respuestas correctas, sobre todo el de 8B. En los 240 textos de feedback que se
+pasaron en las 6 corridas «chequeo»: **0 fugas** y 0 oraciones omitidas por el saneo.
+
+### 4. ¿Mejora la convergencia al quitar al juez como árbitro?
+
+**No de forma clara.** Depende del modelo y la diferencia está dentro del ruido:
+- **llama3.1:8b: mejora leve.** Media de 9.7 vs. 9.0 necesidades que convergen, 38.7 vs. 35.7 coincidencias y
+  72 % vs. 59 % de necesidades estables tras converger. El cambio más claro es en la corrección desde un intento
+  fallido que ejecutó: 66 % vs. 48 %. Con el juez como árbitro, el 8B recibía «incorrecta» sobre respuestas
+  correctas (falsos negativos) y diagnósticos inventados; con el chequeo, los diagnósticos solo se piden donde de
+  verdad hay un error.
+- **qwen2.5-coder 7B: no mejora (8.0 vs. 9.0, 36.7 vs. 40.0).** Su juez ya acertaba el 79 % de las veces como
+  árbitro, así que había menos ruido que quitar. La diferencia la hacen N4 y N5, que con el chequeo convergen menos.
+  N4 es el caso nuevo más instructivo. En chequeo-r1 los 5 intentos tienen el mismo SQL, que excluye los productos
+  con 0 recompras (`HAVING … AND SUM(reordered=1) > 0`), y el diagnóstico de los 5 dice **«Falta el filtro
+  'SUM(CASE WHEN op.reordered = 1 …) > 0' en el HAVING»**: el juez invirtió la diferencia y le pidió agregar
+  justo el filtro que causaba el error. El modelo quedó anclado. En la Fase 24 ese mismo diagnóstico citaba el
+  producto correcto, el saneo lo omitió entero, y con el aviso genérico el modelo se corrigió solo en el intento 3.
+- Las **regresiones ✓→✗ no bajan** (llama 13 % vs. 14 %, qwen 3 % vs. 4 %), aunque ahora el intento siguiente
+  recibe «CORRECTA… conserva el enfoque» y su propio SQL correcto. Ejemplo: llama N8 chequeo-r1, intento 2 ✓
+  (`COUNT(*)`); el 3 recibe «conserva el enfoque» y vuelve a `COUNT(DISTINCT op.product_id)` ✗; el 3 recibe un
+  diagnóstico **correcto** («cambiar COUNT(DISTINCT op.product_id) a COUNT(*)») y el 4 vuelve a ✓. **Esto corrige
+  una lectura de la Fase 24:** ahí atribuí regresiones como la de llama N8 al diagnóstico falso del juez; con el
+  chequeo como árbitro la tasa de regresión es la misma, así que la mayoría viene del muestreo a temperatura 0.5,
+  no del juez. (Casos como llama N6 en la Fase 24, que obedeció un diagnóstico falso, sí eran del juez.)
+
+**Conclusión.** Usar el chequeo automático como árbitro es correcto y se deja así: elimina los veredictos falsos
+(el juez 8B no dio por correctas 112 de las 116 respuestas correctas que opinó), y los diagnósticos ahora solo se piden donde hay un error real.
+Pero no alcanza para mejorar la convergencia de forma consistente, porque ahora los cuellos de botella son otros dos:
+1. **La calidad del diagnóstico** cuando el intento sí está mal: de 8B/7B a veces es correcto y efectivo (llama
+   N8), a veces es al revés (qwen N4).
+2. **La inestabilidad después de acertar**: con temperatura 0.5, ~13 % de los aciertos de llama se pierden en el
+   intento siguiente.
+
+**Siguientes pasos sugeridos (no implementados):**
+(a) **cortar la cadena** al primer ✓ del chequeo, o reusar ese SQL tal cual en vez de volver a generarlo; esto
+eliminaría las regresiones por construcción;
+(b) **diagnósticos deterministas** donde se pueda (por ejemplo: «tu HAVING tiene una condición que el resultado
+correcto no tiene», «cuentas valores distintos donde la pregunta pide unidades»), comparando el SQL del intento
+con el de referencia sin revelar valores;
+(c) **pasarle al juez de diagnóstico el SQL de los dos lados ya alineados por cláusula**, para que no invierta la
+diferencia.
+
+### 5. Verificación
+
+`python -m pytest -q` (completo):
+
+```
+FAILED tests/test_app_instacart.py::test_modelos_cargados_lee_api_ps - Assert...
+FAILED tests/test_generar_ficha_dataset.py::test_construir_ficha_coincide_con_dataset_instacart_md
+2 failed, 525 passed, 2 xpassed in 138.83s (0:02:18)
+```
+
+Son las 2 fallas del entorno que ya estaban antes de la Fase 24 (la librería `ollama` de esta máquina devuelve
+`expires_at` como `datetime`; la ficha imprime `data\instacart` con separador de Windows). Lo nuevo en tests:
+- `tests/test_fase25_arbitro.py` (17): el chequeo decide aunque el juez diga lo contrario (en los dos sentidos);
+  el diagnóstico solo se pide si falló y su prompt no pide veredicto; `--sin-medir-juez`; pipeline fallido sin
+  juez; retroalimentación tras un acierto («conserva el enfoque», sin diagnóstico ni detalle del chequeo);
+  conteos de falsos negativos/positivos del juez; modo independiente sin cambios; `--arbitro juez` reproduce la
+  Fase 24; parseo del diagnóstico; panel con el veredicto del chequeo y la opinión del juez aparte.
+- `test_retroalimentacion_no_contiene_valores_de_la_referencia` (Fase 24) ahora corre 3 escenarios × 10
+  necesidades contra la BD real: árbitro juez, árbitro chequeo con fallo forzado (el diagnóstico cita la respuesta
+  y se sanea) y árbitro chequeo que acierta (sin diagnóstico).
+- Los tests de las Fases 11 y 23 que prueban el juez como árbitro pasan `arbitro="juez"` (el comportamiento que
+  prueban no cambió). El test del botón del panel de la Fase 11 corre en modo independiente.

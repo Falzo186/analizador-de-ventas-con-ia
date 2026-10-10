@@ -39,17 +39,25 @@ def _juez(veredicto: str, justificacion: str = "motivo", diagnostico: str | None
                       ensure_ascii=False)
 
 
+#: Fase 25: salida de la llamada de diagnóstico (sin veredicto).
+DIAGNOSTICO_OK = json.dumps({"comparacion": "difiere", "diagnostico_enfoque": "Revisa la métrica."},
+                            ensure_ascii=False)
+
+
 class ModeloIteraciones:
     """Doble de `client.chat_con_modelo` / `chat_con_modelo_stream`. Cada
     tipo de llamada devuelve sus respuestas en orden y cicla al agotarse."""
 
-    def __init__(self, sql=(SQL_OK,), redaccion=(REDACCION_OK,), juez=(_juez("correcta"),)):
+    def __init__(self, sql=(SQL_OK,), redaccion=(REDACCION_OK,), juez=(_juez("correcta"),),
+                 diagnostico=(DIAGNOSTICO_OK,)):
         self.respuestas = {"sql": itertools.cycle(sql), "redaccion": itertools.cycle(redaccion),
-                           "juez": itertools.cycle(juez)}
+                           "juez": itertools.cycle(juez), "diagnostico": itertools.cycle(diagnostico)}
         self.llamadas: list[dict] = []
 
     @staticmethod
     def _tipo(sistema: str) -> str:
+        if sistema.startswith("Eres un evaluador") and "YA DETERMINÓ" in sistema:
+            return "diagnostico"  # Fase 25: el juez solo explica un intento que ya falló
         if sistema.startswith("Eres un evaluador"):
             return "juez"
         if sistema.startswith("Eres un traductor"):
@@ -132,10 +140,14 @@ def test_pipeline_a_temperatura_05_y_juez_a_00_con_el_mismo_modelo(parchear):
     assert not any(ll["formato_json"] for ll in pipeline)
     jueces = modelo.de_tipo("juez")
     assert [ll["modelo"] for ll in jueces] == ["chico", "chico", "grande", "grande"]
-    assert {ll["temperatura"] for ll in jueces} == {ij.TEMPERATURA_JUEZ} == {0.0}
-    assert all(ll["formato_json"] for ll in jueces)
-    # Orden dentro de cada iteración: SQL -> redacción -> juez.
-    assert [ll["tipo"] for ll in modelo.llamadas[:3]] == ["sql", "redaccion", "juez"]
+    # Fase 25: en la fixture la referencia de N3 está vacía (nada llega a 50 compras), así que el
+    # chequeo automático marca todo como incorrecto y cada intento pide también su diagnóstico.
+    diagnosticos = modelo.de_tipo("diagnostico")
+    assert [ll["modelo"] for ll in diagnosticos] == ["chico", "chico", "grande", "grande"]
+    assert {ll["temperatura"] for ll in jueces + diagnosticos} == {ij.TEMPERATURA_JUEZ} == {0.0}
+    assert all(ll["formato_json"] for ll in jueces + diagnosticos)
+    # Orden dentro de cada iteración: SQL -> redacción -> juez (medición) -> diagnóstico.
+    assert [ll["tipo"] for ll in modelo.llamadas[:4]] == ["sql", "redaccion", "juez", "diagnostico"]
 
 
 def test_reintentos_del_pipeline_tambien_van_a_temperatura_05(parchear):
@@ -147,7 +159,7 @@ def test_reintentos_del_pipeline_tambien_van_a_temperatura_05(parchear):
     it = corrida.iteraciones[0]
     assert it.intentos_sql == 2 and it.origen_respuesta == "reintento"
     assert len(modelo.de_tipo("sql")) == 2 and len(modelo.de_tipo("redaccion")) == 2
-    assert {ll["temperatura"] for ll in modelo.llamadas if ll["tipo"] != "juez"} == {0.5}
+    assert {ll["temperatura"] for ll in modelo.llamadas if ll["tipo"] not in ("juez", "diagnostico")} == {0.5}
 
 
 def test_juez_recibe_pregunta_referencia_y_respuesta_generada(parchear):
@@ -186,7 +198,7 @@ def test_resumen_por_modelo_cuenta_cada_veredicto(parchear):
         _juez("correcta"), _juez("parcialmente correcta"), _juez("incorrecta"), _juez("correcta"),  # chico
         _juez("correcta"), _juez("correcta"), _juez("correcta"), "no es json",                        # grande
     ]))
-    corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=4)
+    corrida = ij.correr_iteraciones("N3", modelos=["chico", "grande"], n=4, arbitro=ij.ARBITRO_JUEZ)
     chico, grande = corrida.resumen()["chico"], corrida.resumen()["grande"]
 
     assert (chico.n, chico.correctas, chico.parciales, chico.incorrectas, chico.sin_veredicto) == (4, 2, 1, 1, 0)
@@ -209,7 +221,7 @@ def test_pipeline_fallido_es_incorrecta_sin_llamar_al_juez(parchear):
 
 def test_juez_que_no_responde_queda_sin_veredicto(parchear):
     parchear(ModeloIteraciones(juez=[client.LlmTimeout("El modelo 'x' no respondió en 30s")]))
-    it = ij.correr_iteraciones("N3", modelos=["chico"], n=1).iteraciones[0]
+    it = ij.correr_iteraciones("N3", modelos=["chico"], n=1, arbitro=ij.ARBITRO_JUEZ).iteraciones[0]
     assert it.ok
     assert it.veredicto == ij.SIN_VEREDICTO and it.origen_veredicto == ij.ORIGEN_JUEZ_ERROR
     assert "no respondió" in it.justificacion
@@ -234,7 +246,7 @@ def test_necesidad_desconocida_se_rechaza():
 
 def test_corrida_serializa_a_json_con_todo_lo_mostrado(parchear):
     parchear(ModeloIteraciones(juez=[_juez("parcialmente correcta", "acierta el día pero no la hora")]))
-    corrida = ij.correr_iteraciones("N3", modelos=["chico"], n=1)
+    corrida = ij.correr_iteraciones("N3", modelos=["chico"], n=1, arbitro=ij.ARBITRO_JUEZ)
     doc = json.loads(ij.a_json(corrida))
     assert doc["temperatura"] == 0.5 and doc["temperatura_juez"] == 0.0
     assert doc["resumen"]["chico"]["pct_correctas"] == 0.0
@@ -380,6 +392,8 @@ def test_boton_corre_n_iteraciones_por_modelo_y_muestra_cada_intento(app):
     modelo = ModeloIteraciones(juez=[_juez("correcta", "coincide"), _juez("incorrecta", "no coincide")])
     at = app(modelo)
     at.number_input(key=app_instacart.CLAVE_ITERACIONES).set_value(2).run()
+    # Fase 25: en independientes el juez sigue decidiendo (en autocorrección decide el chequeo).
+    at.selectbox(key=app_instacart.CLAVE_MODO_ITERACION).set_value(ij.MODO_INDEPENDIENTE).run()
     at = _a_dashboard(at)
     assert any(e.label.startswith("🧪 Iteraciones con juez IA") for e in at.expander)
 

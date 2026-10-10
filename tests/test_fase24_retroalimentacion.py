@@ -106,9 +106,20 @@ def _cita(filas: list[dict], d: nec.DefNecesidad) -> str:
     return " y ".join(p for p in partes if p)
 
 
+#: Escenarios del peor caso (Fase 25):
+#: - "juez": el juez-LLM es el árbitro (Fase 24) y su diagnóstico cita la respuesta.
+#: - "chequeo_falla": el chequeo automático es el árbitro y se FUERZA que diga que falló (aunque el
+#:   resultado sea el de la referencia), para que se llame al diagnóstico y este cite la respuesta.
+#: - "chequeo_acierta": el chequeo dice que acertó: no hay diagnóstico, solo "conserva el enfoque".
+ESCENARIOS = ("juez", "chequeo_falla", "chequeo_acierta")
+
+
 @pytest.mark.integration
+@pytest.mark.parametrize("escenario", ESCENARIOS)
 @pytest.mark.parametrize("nid", list(nec.IDS))
-def test_retroalimentacion_no_contiene_valores_de_la_referencia(bd_real, monkeypatch, nid):
+def test_retroalimentacion_no_contiene_valores_de_la_referencia(bd_real, monkeypatch, nid, escenario):
+    import json as _json
+
     d = nec.DEFINICIONES[nid]
     r = servicio.cargar_necesidad(nid).resultado
     filas_ref = r.tablas[nec.CONSULTA]
@@ -118,27 +129,42 @@ def test_retroalimentacion_no_contiene_valores_de_la_referencia(bd_real, monkeyp
         redaccion=[f"La respuesta es {cita}."],
         juez=[_juez("correcta", f"Coincide con la referencia: {cita}.",
                     f"{DIAGNOSTICO_LIMPIO} La respuesta correcta es {cita}.")],
+        diagnostico=[_json.dumps({"comparacion": f"Debió dar {cita}.",
+                                  "diagnostico_enfoque": f"{DIAGNOSTICO_LIMPIO} La respuesta correcta es {cita}."},
+                                 ensure_ascii=False)],
     )
     from src.llm import client
     monkeypatch.setattr(client, "chat_con_modelo", modelo.chat_con_modelo)
+    original = rf.coincide_con_referencia
+    if escenario == "chequeo_falla":
+        monkeypatch.setattr(rf, "coincide_con_referencia",
+                            lambda *a, **k: (False, f"forzado en el test; el real: {original(*a, **k)}"))
+    arbitro = ij.ARBITRO_JUEZ if escenario == "juez" else ij.ARBITRO_CHEQUEO
 
-    corrida = ij.correr_iteraciones(nid, modelos=["simulado"], n=2, modo=ij.MODO_AUTOCORRECCION)
+    corrida = ij.correr_iteraciones(nid, modelos=["simulado"], n=2, modo=ij.MODO_AUTOCORRECCION, arbitro=arbitro)
     primero, segundo = corrida.iteraciones
     retro = segundo.retroalimentacion
 
     # El peor caso es real: el intento 1 SÍ tenía la respuesta, y el juez la citó.
-    assert primero.ok and primero.coincide_referencia, primero.detalle_coincidencia
-    assert valores_fugados(primero.justificacion, d.pregunta, filas_ref), "la comparación sí cita la referencia"
-    assert valores_fugados(primero.diagnostico, d.pregunta, filas_ref), "el diagnóstico crudo sí la cita"
+    assert primero.ok and original(nid, corrida.referencia_filas, primero.filas)[0]
+    assert valores_fugados(primero.juez_justificacion, d.pregunta, filas_ref), "la opinión del juez sí la cita"
     # Lo que pasa al intento 2 no tiene ningún valor de la referencia...
     assert valores_fugados(retro, d.pregunta, filas_ref) == [], retro
     assert rf.fugas(retro, corrida.valores_protegidos) == [], retro
-    # ...pero sigue siendo específico: el SQL, la forma, el veredicto y la oración limpia del diagnóstico.
+    # ...pero sigue siendo específico.
     assert f"SQL que generaste: {' '.join(d.sql().split())}" in retro
     assert "devolvió" in retro and "columnas:" in retro
-    assert "Veredicto del evaluador: CORRECTA." in retro
-    assert f"Qué está mal en el enfoque, según el evaluador: {DIAGNOSTICO_LIMPIO}" in retro
-    assert primero.oraciones_omitidas == 1
+    if escenario == "chequeo_acierta":
+        assert "Veredicto (chequeo automático contra la respuesta correcta): CORRECTA." in retro
+        assert "conserva el enfoque" in retro and "enfoque, según" not in retro
+        assert primero.diagnostico is None and not modelo.de_tipo("diagnostico")
+    else:
+        assert valores_fugados(primero.diagnostico, d.pregunta, filas_ref), "el diagnóstico crudo sí la cita"
+        esperado = ("Veredicto del evaluador: CORRECTA." if escenario == "juez"
+                    else "Veredicto (chequeo automático contra la respuesta correcta): INCORRECTA.")
+        assert esperado in retro
+        assert f"Qué está mal en el enfoque, según el evaluador: {DIAGNOSTICO_LIMPIO}" in retro
+        assert primero.oraciones_omitidas == 1
     # Y eso es exactamente lo que llegó al modelo en el prompt de SQL del intento 2.
     assert retro in modelo.de_tipo("sql")[1]["usuario"]
     assert valores_fugados(modelo.de_tipo("sql")[1]["usuario"].split(retro)[0], d.pregunta, filas_ref) == []
