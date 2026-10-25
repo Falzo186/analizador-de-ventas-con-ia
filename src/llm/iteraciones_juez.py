@@ -108,6 +108,7 @@ from src.dashboard import servicio
 from src.llm import client
 from src.llm import responder_instacart as ri
 from src.llm import retroalimentacion as rf
+from src.llm import tecnicas
 from src.llm.prompts_instacart import VEREDICTOS_JUEZ, prompt_diagnostico_instacart, prompt_juez_instacart
 
 #: Temperatura de las N corridas del pipeline (solo este modo de prueba).
@@ -424,10 +425,31 @@ class Iteracion:
     juez_origen: str | None = None
     juez_crudo: str | None = None
     duracion_juez_medicion_s: float = 0.0
+    #: Fase 30: técnica de contexto del intento, ejemplos few-shot inyectados
+    #: [(id, similitud)] y el texto exacto del bloque (None en base).
+    tecnica: str = tecnicas.BASE
+    ejemplos_usados: list = field(default_factory=list)
+    bloque_ejemplos: str | None = None
 
     @property
     def ok(self) -> bool:
         return self.error is None
+
+    @property
+    def duracion_juez_total_s(self) -> float:
+        """Fase 30: todo lo que tardó el juez en este intento (diagnóstico o
+        veredicto, más la opinión de medición)."""
+        return round(self.duracion_juez_s + self.duracion_juez_medicion_s, 2)
+
+    @property
+    def duracion_total_s(self) -> float:
+        """Fase 30: lo que tardó el intento completo (pipeline + juez)."""
+        return round(self.duracion_pipeline_s + self.duracion_juez_total_s, 2)
+
+    @property
+    def texto_ejemplos(self) -> str:
+        """«N5-neg-1 (sim 0.62), ...», o «ninguno» si no se inyectó nada."""
+        return ", ".join(f"{i} (sim {s:.2f})" for i, s in self.ejemplos_usados) or "ninguno"
 
     @property
     def etiqueta(self) -> str:
@@ -471,6 +493,26 @@ class ResumenModelo:
         sumo uno correcto por modelo: ahí lo que importa es `estado_final`."""
         return 100.0 * self.correctas / self.n if self.n else 0.0
 
+    @property
+    def pct_acercamiento(self) -> float:
+        """Fase 30: % de intentos ejecutados que cumplieron o se acercaron
+        (veredicto «correcta» o «parcial»), solo a partir de los veredictos."""
+        return 100.0 * (self.correctas + self.parciales) / self.n if self.n else 0.0
+
+
+#: Fase 30: orden de los veredictos para decir si un intento mejoró o empeoró.
+RANGO_VEREDICTO = {INCORRECTA: 0, PARCIAL: 1, CORRECTA: 2}
+MEJORO, EMPEORO, IGUAL = "mejoró", "empeoró", "igual"
+
+
+def tendencia(anterior: str | None, actual: str) -> str | None:
+    """Cambio del veredicto respecto al intento anterior del mismo modelo
+    (None en el primero o si alguno no tiene veredicto)."""
+    if anterior not in RANGO_VEREDICTO or actual not in RANGO_VEREDICTO:
+        return None
+    d = RANGO_VEREDICTO[actual] - RANGO_VEREDICTO[anterior]
+    return MEJORO if d > 0 else EMPEORO if d < 0 else IGUAL
+
 
 @dataclass
 class CorridaIteraciones:
@@ -500,6 +542,8 @@ class CorridaIteraciones:
     #: intento y los siguientes quedan "no ejecutados (ya convergió)".
     corta_al_acertar: bool = False
     convergencia: dict[str, int] = field(default_factory=dict)
+    #: Fase 30: técnica de contexto de todos los intentos de la corrida.
+    tecnica: str = tecnicas.BASE
 
     @property
     def valores_protegidos(self) -> rf.ValoresProtegidos:
@@ -556,6 +600,25 @@ class CorridaIteraciones:
             )
         return out
 
+    def tabla(self) -> list[dict]:
+        """Fase 30: una fila por intento ejecutado, en orden: qué respondió,
+        el veredicto, si mejoró o empeoró respecto a su intento anterior, la
+        pista del juez que pasó al siguiente intento y cuánto tardaron."""
+        filas = []
+        for modelo in self.modelos:
+            anterior = None
+            for it in self.de_modelo(modelo):
+                filas.append({
+                    "intento": it.numero, "modelo": modelo, "tecnica": it.tecnica,
+                    "ejemplos": it.texto_ejemplos, "veredicto": it.veredicto,
+                    "cambio": tendencia(anterior, it.veredicto),
+                    "respuesta": it.respuesta if it.ok else f"(sin respuesta) {it.error}",
+                    "pista_del_juez": it.diagnostico_retro,
+                    "juez_s": it.duracion_juez_total_s, "iteracion_s": it.duracion_total_s,
+                })
+                anterior = it.veredicto
+        return filas
+
     def a_dict(self) -> dict:
         return {
             "necesidad": self.necesidad,
@@ -568,6 +631,7 @@ class CorridaIteraciones:
             "medir_juez": self.medir_juez,
             "corta_al_acertar": self.corta_al_acertar,
             "convergencia": self.convergencia,
+            "tecnica": self.tecnica,
             "modelos": self.modelos,
             "n_iteraciones": self.n_iteraciones,
             "estado": self.estado,
@@ -576,8 +640,11 @@ class CorridaIteraciones:
             "temperatura": self.temperatura,
             "temperatura_juez": self.temperatura_juez,
             "timestamp": self.timestamp,
-            "resumen": {m: {**asdict(r), "pct_correctas": r.pct_correctas} for m, r in self.resumen().items()},
-            "iteraciones": [{"etiqueta": it.etiqueta, **asdict(it)} for it in self.iteraciones],
+            "resumen": {m: {**asdict(r), "pct_correctas": r.pct_correctas, "pct_acercamiento": r.pct_acercamiento}
+                        for m, r in self.resumen().items()},
+            "tabla_iteraciones": self.tabla(),
+            "iteraciones": [{"etiqueta": it.etiqueta, **asdict(it), "duracion_juez_total_s": it.duracion_juez_total_s,
+                             "duracion_total_s": it.duracion_total_s} for it in self.iteraciones],
             "no_ejecutadas": [
                 {"modelo": m, "numero": k, "etiqueta": f"Intento {k} de {self.n_iteraciones} · {m}",
                  "estado": texto_no_ejecutada(self.convergencia[m])}
@@ -681,6 +748,7 @@ def correr_iteracion(
     referencia_filas: list[dict] | None = None,
     arbitro: str = ARBITRO_JUEZ,
     medir_juez: bool = True,
+    tecnica: str = tecnicas.BASE,
 ) -> Iteracion:
     """Una iteración: pipeline completo (temperatura 0.5) + veredicto.
     `retroalimentacion`: intento anterior (modo autocorrección).
@@ -710,6 +778,7 @@ def correr_iteracion(
         temperatura=TEMPERATURA_ITERACIONES,
         retroalimentacion=retroalimentacion,
         timeout_consulta_s=timeout_consulta(necesidad),
+        tecnica=tecnica,
     )
     t1 = time.perf_counter()
     referencia_filas = referencia_filas or []
@@ -766,12 +835,15 @@ def correr_iteracion(
         chequeo_forma=rf.chequeo_error(res.error) + rf.chequeo_forma(
             necesidad, res.columnas, res.filas, None if res.filas is None else len(res.filas)),
         coincide_referencia=coincide, detalle_coincidencia=detalle,
+        tecnica=res.tecnica, ejemplos_usados=[list(u) for u in res.ejemplos_usados],
+        bloque_ejemplos=res.bloque_ejemplos,
     )
 
 
 def nueva_corrida(
     necesidad: str, *, modelos: Sequence[str], n: int = ITERACIONES_DEFAULT, modo: str = MODO_DEFAULT,
     arbitro: str | None = None, medir_juez: bool = True, corta_al_acertar: bool | None = None,
+    tecnica: str | None = None,
 ) -> CorridaIteraciones:
     """Corrida vacía ("en curso"), con la referencia ya cargada. Quien la
     corre (`correr_iteraciones(corrida=...)`) le agrega cada intento apenas
@@ -781,7 +853,10 @@ def nueva_corrida(
     `corta_al_acertar` None -> sí en autocorrección (Fase 26). En modo
     independiente no se permite: ese modo mide la variabilidad de N muestras
     independientes, y cortar en el primer acierto la arruinaría (y ahí un
-    intento extra no puede "perder" un acierto anterior)."""
+    intento extra no puede "perder" un acierto anterior).
+    `tecnica` (Fase 30) None -> `tecnicas.tecnica_por_defecto()`; una
+    pendiente lanza `tecnicas.TecnicaPendiente`."""
+    tecnica = tecnicas.validar_tecnica(tecnica) if tecnica else tecnicas.tecnica_por_defecto()
     arbitro = arbitro if arbitro is not None else arbitro_por_defecto(modo)
     corta_al_acertar = (modo == MODO_AUTOCORRECCION) if corta_al_acertar is None else corta_al_acertar
     if corta_al_acertar and modo != MODO_AUTOCORRECCION:
@@ -802,7 +877,7 @@ def nueva_corrida(
         timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
         referencia_sql="\n".join(c.sql for c in r.consultas),
         referencia_filas=[{k: _valor_json(v) for k, v in f.items()} for f in _filas_referencia(r)],
-        arbitro=arbitro, medir_juez=medir_juez, corta_al_acertar=corta_al_acertar,
+        arbitro=arbitro, medir_juez=medir_juez, corta_al_acertar=corta_al_acertar, tecnica=tecnica,
     )
 
 
@@ -822,6 +897,7 @@ def correr_iteraciones(
     arbitro: str | None = None,
     medir_juez: bool = True,
     corta_al_acertar: bool | None = None,
+    tecnica: str | None = None,
 ) -> CorridaIteraciones:
     """N iteraciones por modelo, modelo por modelo (todas las del pequeño y
     luego todas las del grande): así Ollama carga cada modelo una sola vez
@@ -836,7 +912,7 @@ def correr_iteraciones(
     de que termine; si no, se crea aquí."""
     if corrida is None:
         corrida = nueva_corrida(necesidad, modelos=modelos, n=n, modo=modo, arbitro=arbitro, medir_juez=medir_juez,
-                                corta_al_acertar=corta_al_acertar)
+                                corta_al_acertar=corta_al_acertar, tecnica=tecnica)
     total = corrida.total_esperado
     vp = corrida.valores_protegidos
     for modelo in corrida.modelos:
@@ -851,7 +927,7 @@ def correr_iteraciones(
                 retroalimentacion=retro,
                 timeout_sql_llm_s=timeout_sql_llm_s, timeout_respuesta_llm_s=timeout_respuesta_llm_s,
                 timeout_juez_s=timeout_juez_s, db_path=db_path, referencia_filas=corrida.referencia_filas,
-                arbitro=corrida.arbitro, medir_juez=corrida.medir_juez,
+                arbitro=corrida.arbitro, medir_juez=corrida.medir_juez, tecnica=corrida.tecnica,
             )
             corrida.iteraciones.append(it)
             anterior = it
@@ -913,6 +989,8 @@ def _resumen_texto(r: ResumenModelo) -> str:
     texto = (f"{r.modelo}: {r.correctas}/{r.n} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
              f"{r.sin_veredicto} sin veredicto · {conv} · chequeo automático: {r.coincidencias}/{r.n} coinciden "
              f"con la referencia ({coin})")
+    texto += (f" · cumplió {r.pct_correctas:.0f}% · cumplió o se acercó (correcta o parcial) "
+              f"{r.pct_acercamiento:.0f}%")
     if r.juez_opiniones:
         texto += (f" · juez-LLM: {r.juez_correctas}/{r.juez_opiniones} «correcta», de acuerdo con el chequeo en "
                   f"{r.juez_acuerdos}/{r.juez_opiniones} ({r.juez_falsos_negativos} falsos negativos, "
@@ -937,6 +1015,7 @@ def a_texto(corrida: CorridaIteraciones) -> str:
         f"Estado: {corrida.estado} · {len(corrida.iteraciones)} de {corrida.total_esperado} intentos ejecutados"
         + (f", {corrida.total_no_ejecutadas} no ejecutados porque ya había convergido" if corrida.total_no_ejecutadas else "")
         + (" · corte al primer acierto: sí" if corrida.corta_al_acertar else ""),
+        f"Técnica de contexto: {corrida.tecnica}",
         "",
         "RESPUESTA DE REFERENCIA (correcta, del software determinista):",
         corrida.referencia,
@@ -945,8 +1024,18 @@ def a_texto(corrida: CorridaIteraciones) -> str:
     ]
     for r in corrida.resumen().values():
         out.append(f"- {_resumen_texto(r)}")
+    out += ["", "TABLA DE INTENTOS (intento · modelo · veredicto · cambio vs. el anterior · juez s · intento s):"]
+    for f in corrida.tabla():
+        out.append(f"- {f['intento']} · {f['modelo']} · {f['veredicto']} · {f['cambio'] or '—'} · "
+                   f"{f['juez_s']:.1f} s · {f['iteracion_s']:.1f} s")
+    cambios = {f"{f['modelo']}#{f['intento']}": f["cambio"] for f in corrida.tabla()}
     for it in corrida.iteraciones:
         out += ["", "-" * 78, f"{it.etiqueta.upper()}  →  {it.veredicto.upper()}", "-" * 78]
+        out.append(f"Técnica: {it.tecnica} — ejemplos usados: {it.texto_ejemplos}")
+        if it.bloque_ejemplos:
+            out += ["Ejemplos inyectados (texto exacto):", it.bloque_ejemplos, ""]
+        if cambios.get(f"{it.modelo}#{it.numero}"):
+            out.append(f"Cambio respecto al intento anterior: {cambios[f'{it.modelo}#{it.numero}']}")
         if it.retroalimentacion:
             out += ["Contexto recibido del intento anterior:", it.retroalimentacion, ""]
         if it.sql_rechazado:
@@ -985,7 +1074,8 @@ def a_texto(corrida: CorridaIteraciones) -> str:
             out.append(f"Chequeo automático vs. referencia: {'COINCIDE' if it.coincide_referencia else 'NO coincide'} "
                        f"({it.detalle_coincidencia})")
         out.append(f"Duración: pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_s:.1f} s"
-                   + (f" · juez de medición {it.duracion_juez_medicion_s:.1f} s" if it.duracion_juez_medicion_s else ""))
+                   + (f" · juez de medición {it.duracion_juez_medicion_s:.1f} s" if it.duracion_juez_medicion_s else "")
+                   + f" · intento completo {it.duracion_total_s:.1f} s")
         if it.numero == corrida.convergencia.get(it.modelo):
             for k in corrida.no_ejecutadas(it.modelo):
                 out += ["", "-" * 78,
@@ -1059,6 +1149,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Autocorrección: seguir iterando después del primer acierto (comportamiento de la Fase 25)")
     parser.add_argument("--sin-medir-juez", action="store_true",
                         help="Con árbitro «chequeo», no llamar al juez-LLM solo para registrar su opinión")
+    parser.add_argument("--tecnica", choices=list(tecnicas.TECNICAS), default=None,
+                        help="Técnica de contexto (Fase 30): base o few_shot; rag/harness están pendientes. "
+                             "Default: VENTIA_TECNICA o «base»")
     parser.add_argument("--pequeno", default=MODELO_PEQUENO_DEFAULT)
     parser.add_argument("--grande", default=MODELO_GRANDE_DEFAULT,
                         help="Modelo grande; «-» para correr solo el pequeño")
@@ -1068,6 +1161,10 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Carpeta donde guardar {nombre_archivo('Nx')} y {nombre_archivo_texto('Nx')} "
                              "(se reescriben después de CADA intento)")
     args = parser.parse_args(argv)
+    try:
+        tecnica = tecnicas.validar_tecnica(args.tecnica) if args.tecnica else tecnicas.tecnica_por_defecto()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     nids = sorted(PREGUNTAS, key=_orden_nid) if "todas" in args.necesidades else list(dict.fromkeys(args.necesidades))
     modelos = [args.pequeno] + ([] if args.grande == "-" else [args.grande])
@@ -1080,8 +1177,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Modelos:   {', '.join(modelos)} · {args.iteraciones} iteraciones c/u · modo {args.modo} · "
               f"árbitro {args.arbitro or arbitro_por_defecto(args.modo)}")
         print(f"Temperatura: pipeline {TEMPERATURA_ITERACIONES}, juez {TEMPERATURA_JUEZ} · timeout {args.timeout:.0f} s"
-              f" · consulta en DuckDB {timeout_consulta(nid):.0f} s")
+              f" · consulta en DuckDB {timeout_consulta(nid):.0f} s · técnica {tecnica}")
         corrida = nueva_corrida(nid, modelos=modelos, n=args.iteraciones, modo=args.modo, arbitro=args.arbitro,
+                                tecnica=tecnica,
                                 medir_juez=not args.sin_medir_juez,
                                 corta_al_acertar=False if args.sin_corte else None)
 

@@ -85,18 +85,22 @@ _CIERRE_RESPUESTA_RETRO = (
 )
 
 
-def _sistema_sql(descripcion_esquema: str, lecciones: str | None) -> str:
+def _sistema_sql(descripcion_esquema: str, lecciones: str | None, ejemplos: str | None = None) -> str:
     """Prompt de sistema de la llamada de SQL. `lecciones` (Fase 27): el
     bloque de la bitácora del chat (`bitacora_chat.Bitacora.bloque_prompt`),
-    al final, después de las reglas de negocio. Sin lecciones, el prompt es
-    idéntico al de antes."""
+    al final, después de las reglas de negocio. `ejemplos` (Fase 30): el
+    bloque few-shot (`few_shot.contexto_few_shot`), después del esquema y las
+    reglas y ANTES de las lecciones. Sin lecciones ni ejemplos (técnica base),
+    el prompt es idéntico al de antes."""
     sistema = _PLANTILLA_SQL.format(descripcion_esquema=descripcion_esquema)
+    if ejemplos:
+        sistema = f"{sistema}\n{ejemplos.strip()}\n"
     return f"{sistema}\n{lecciones.strip()}\n" if lecciones else sistema
 
 
 def prompt_sql_instacart(
     pregunta: str, descripcion_esquema: str, contexto: list[TurnoPrevio] | None = None,
-    retroalimentacion: str | None = None, lecciones: str | None = None,
+    retroalimentacion: str | None = None, lecciones: str | None = None, ejemplos: str | None = None,
 ) -> tuple[str, str]:
     """Devuelve (mensaje_de_sistema, mensaje_de_usuario) para la llamada 1
     (texto -> SQL). `descripcion_esquema` viene de
@@ -104,21 +108,21 @@ def prompt_sql_instacart(
     módulo nunca escribe nombres de tabla/columna por su cuenta.
     `contexto`: turnos previos (Fase 6), ver `_con_contexto`.
     `retroalimentacion`: intento anterior (Fase 23), ver `_con_retroalimentacion`.
-    `lecciones`: bitácora del chat (Fase 27), ver `_sistema_sql`."""
-    sistema = _sistema_sql(descripcion_esquema, lecciones)
+    `lecciones`: bitácora del chat (Fase 27); `ejemplos`: few-shot (Fase 30), ver `_sistema_sql`."""
+    sistema = _sistema_sql(descripcion_esquema, lecciones, ejemplos)
     return sistema, _con_retroalimentacion(_con_contexto(pregunta, contexto), retroalimentacion, _CIERRE_SQL_RETRO)
 
 
 def prompt_sql_reintento_instacart(
     pregunta: str, descripcion_esquema: str, sql_anterior: str, motivo: str,
     contexto: list[TurnoPrevio] | None = None, retroalimentacion: str | None = None,
-    lecciones: str | None = None,
+    lecciones: str | None = None, ejemplos: str | None = None,
 ) -> tuple[str, str]:
     """Igual que `prompt_sql_instacart`, para el ÚNICO reintento: mismo
     sistema, pero el mensaje de usuario agrega el SQL rechazado y el motivo
     EXACTO del rechazo (el de `validar_sql()`, el error del motor o, desde la
     Fase 27, el del revisor de SQL)."""
-    sistema = _sistema_sql(descripcion_esquema, lecciones)
+    sistema = _sistema_sql(descripcion_esquema, lecciones, ejemplos)
     usuario = (
         f"{_con_retroalimentacion(_con_contexto(pregunta, contexto), retroalimentacion, _CIERRE_SQL_RETRO)}\n\n"
         f"Tu consulta anterior fue:\n{sql_anterior.strip()}\n\n"

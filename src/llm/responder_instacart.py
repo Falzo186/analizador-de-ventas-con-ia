@@ -36,7 +36,7 @@ from pathlib import Path
 
 import duckdb
 
-from src.llm import client
+from src.llm import client, tecnicas
 from src.llm.bitacora_chat import Bitacora, leccion_de_error, leccion_de_revision, mapa_columnas
 from src.llm.esquema_instacart import construir_descripcion_esquema, describir_columnas
 from src.llm.revision_sql import FILAS_AL_REVISOR, revisar_sql
@@ -109,6 +109,11 @@ class ResultadoInstacart:
     lecciones_nuevas: list[str] = field(default_factory=list)
     #: Fase 27: cuántas lecciones de la bitácora llevaba el prompt de sistema.
     lecciones_en_prompt: int = 0
+    #: Fase 30: técnica de contexto usada, ejemplos few-shot inyectados
+    #: [(id, similitud)] y el texto exacto del bloque (None si no hubo).
+    tecnica: str = "base"
+    ejemplos_usados: list[tuple[str, float]] = field(default_factory=list)
+    bloque_ejemplos: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -255,6 +260,7 @@ def generar_y_ejecutar_con_reintento(
     temperatura: float = 0.0,
     retroalimentacion: str | None = None,
     lecciones: str | None = None,
+    ejemplos: str | None = None,
 ) -> None:
     """Pasos 2-4 con UN reintento como máximo. Llena `res.sql`,
     `res.columnas`, `res.filas`, `res.intentos` y `res.motivo_reintento`;
@@ -271,7 +277,7 @@ def generar_y_ejecutar_con_reintento(
     """
     res.sql = generar_sql_instacart(
         pregunta, descripcion_esquema, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
-        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
+        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones, ejemplos=ejemplos,
     )
     res.intentos = 1
     try:
@@ -291,7 +297,7 @@ def generar_y_ejecutar_con_reintento(
     res.sql_rechazado = res.sql
     res.sql = generar_sql_reintento_instacart(
         pregunta, descripcion_esquema, res.sql, motivo, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
-        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
+        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones, ejemplos=ejemplos,
     )
     res.intentos = 2
     res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s)
@@ -312,6 +318,7 @@ def responder_pregunta_instacart(
     bitacora: Bitacora | None = None,
     revisar_sql: bool = False,
     timeout_consulta_s: float = TIMEOUT_S_DEFAULT,
+    tecnica: str | None = None,
 ) -> ResultadoInstacart:
     """Ejecuta el flujo completo y SIEMPRE devuelve un `ResultadoInstacart`
     (nunca lanza una excepción hacia quien llama). `modelo` (Fase 9): el
@@ -340,8 +347,21 @@ def responder_pregunta_instacart(
 
     `timeout_consulta_s` (Fase 29): límite de la guarda de DuckDB. El chat usa
     el default (10 s); el panel de iteraciones y la entrega pasan el de la
-    necesidad (`DefNecesidad.timeout_consulta_s`, p. ej. 25 s en N9)."""
+    necesidad (`DefNecesidad.timeout_consulta_s`, p. ej. 25 s en N9).
+
+    `tecnica` (Fase 30): «base» o «few_shot» (`src.llm.tecnicas`); None =
+    `tecnicas.tecnica_por_defecto()` (VENTIA_TECNICA o «base»). Con few_shot,
+    los ejemplos más parecidos van al prompt de sistema de TODAS las llamadas
+    de SQL de esta pregunta (y su reintento). Una técnica pendiente o
+    desconocida devuelve el error en `res.error`."""
     res = ResultadoInstacart(pregunta=pregunta)
+    try:
+        res.tecnica = tecnicas.validar_tecnica(tecnica) if tecnica else tecnicas.tecnica_por_defecto()
+        ctx = tecnicas.contexto_de_tecnica(res.tecnica, pregunta)
+    except ValueError as exc:
+        res.error = str(exc)
+        return res
+    res.ejemplos_usados, res.bloque_ejemplos = ctx.usados, ctx.bloque
     lecciones = bitacora.bloque_prompt() if bitacora is not None else None
     res.lecciones_en_prompt = len(bitacora.para_prompt()) if lecciones else 0
 
@@ -367,7 +387,7 @@ def responder_pregunta_instacart(
                 con, pregunta, descripcion_esquema, res,
                 timeout_llm_s=timeout_sql_llm_s, limite_filas=limite_filas, contexto=contexto,
                 modelo=modelo, temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
-                timeout_sql_s=timeout_consulta_s,
+                timeout_sql_s=timeout_consulta_s, ejemplos=res.bloque_ejemplos,
             )
         except client.LlmTimeout as exc:
             res.error = f"El modelo tardó demasiado en generar la consulta y se canceló: {exc}"
@@ -388,6 +408,7 @@ def responder_pregunta_instacart(
             _revisar_y_quizas_reintentar(
                 con, res, descripcion_esquema, modelo=modelo, timeout_llm_s=timeout_sql_llm_s,
                 limite_filas=limite_filas, contexto=contexto, lecciones=lecciones, timeout_sql_s=timeout_consulta_s,
+                ejemplos=res.bloque_ejemplos,
             )
         if bitacora is not None:
             _aprender(con, res, bitacora, error_ejecucion)
@@ -420,7 +441,7 @@ def responder_pregunta_instacart(
 def _revisar_y_quizas_reintentar(
     con: duckdb.DuckDBPyConnection, res: ResultadoInstacart, descripcion_esquema: str, *,
     modelo: str | None, timeout_llm_s: float, limite_filas: int, contexto: list[TurnoPrevio] | None,
-    lecciones: str | None, timeout_sql_s: float = TIMEOUT_S_DEFAULT,
+    lecciones: str | None, timeout_sql_s: float = TIMEOUT_S_DEFAULT, ejemplos: str | None = None,
 ) -> None:
     """Revisa la sentencia que ejecutó. Si es sospechosa y queda el único
     reintento, lo usa; si el reintento no ejecuta, se queda el resultado
@@ -439,7 +460,7 @@ def _revisar_y_quizas_reintentar(
     try:
         sql_nuevo = generar_sql_reintento_instacart(
             res.pregunta, descripcion_esquema, res.sql or "", motivo, modelo=modelo, timeout_s=timeout_llm_s,
-            contexto=contexto, lecciones=lecciones,
+            contexto=contexto, lecciones=lecciones, ejemplos=ejemplos,
         )
         sql_nuevo, columnas, filas = _validar_y_ejecutar(con, sql_nuevo, limite_filas, timeout_sql_s)
     except (duckdb.Error, TimeoutConsulta) as exc:

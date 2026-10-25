@@ -544,8 +544,10 @@ def test_ollama_caido_se_informa_sin_romper_la_app(app, monkeypatch):
     at = app(ModeloSimulado([], []))
     assert not list(at.exception)
     assert any("systemctl status ollama" in e.value for e in at.error)
-    # El único selector que queda es el «Modo de iteración» (Fase 23), que no es un modelo.
-    assert [s.key for s in at.selectbox] == [app_instacart.CLAVE_MODO_ITERACION], \
+    # Los únicos selectores que quedan no son de modelo: «Modo de iteración» (Fase 23) y
+    # «Técnica de contexto» (Fase 30).
+    claves = sorted([app_instacart.CLAVE_MODO_ITERACION, app_instacart.CLAVE_TECNICA])
+    assert sorted(s.key for s in at.selectbox) == claves, \
         "sin Ollama no se ofrece ningún modelo"
     assert at.chat_input, "el chat sigue en pantalla (sus errores ya son controlados)"
 

@@ -49,6 +49,11 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   «Independientes» en ⚙️. La corrida se guarda antes de empezar y cada
   intento apenas termina: ninguno se pierde si la ejecución se interrumpe.
   Export del log (.txt legible y .json) por necesidad o de todas.
+- Técnicas de contexto (Fase 30): en ⚙️, «Técnica de contexto» (Base o Few shot;
+  RAG y Harness visibles pero deshabilitadas, pendientes). Aplica al chat, al
+  panel de iteraciones y a la entrega. En el dashboard, «🧩 Necesidades
+  negativas» lista el catálogo few-shot y «📐 Matriz de técnicas» muestra la
+  tabla del profesor desde docs/resultados/matriz_tecnicas.json.
 """
 
 from __future__ import annotations
@@ -69,8 +74,11 @@ from src.analytics import registro
 from src.llm import client
 from src.llm import formato_entrega
 from src.llm import bitacora_chat
+from src.llm import few_shot
 from src.llm import iteraciones_juez as ij
+from src.llm import matriz_tecnicas
 from src.llm import responder_instacart as ri
+from src.llm import tecnicas
 from src.ui import dashboard, estilos
 
 #: Turnos previos (pregunta + SQL) que se mandan como contexto de
@@ -117,6 +125,8 @@ CLAVE_REVISAR_SQL = "revisar_sql_sel"
 CLAVE_ITERACIONES = "iteraciones_sel"
 CLAVE_MODELO_PEQUENO = "modelo_pequeno_sel"
 CLAVE_MODELO_GRANDE = "modelo_grande_sel"
+#: Fase 30: técnica de contexto (chat, iteraciones y entrega).
+CLAVE_TECNICA = "tecnica_sel"
 #: Configuración (modelo + esfuerzo) congelada al ENVIAR la pregunta en curso.
 CLAVE_CONFIG_EN_CURSO = "config_en_curso"
 AVISO_OLLAMA_CAIDO = (
@@ -148,6 +158,8 @@ def inicializar_estado() -> None:
         st.session_state[CLAVE_ITERACIONES] = ij.ITERACIONES_DEFAULT
     if CLAVE_MODO_ITERACION not in st.session_state:
         st.session_state[CLAVE_MODO_ITERACION] = ij.MODO_DEFAULT
+    if CLAVE_TECNICA not in st.session_state:
+        st.session_state[CLAVE_TECNICA] = tecnicas.tecnica_por_defecto()
     if CLAVE_NECESIDAD in st.session_state:
         # Streamlit borra el estado de un widget con `key` en toda ejecución
         # en la que no se dibuja (aquí, la vista de chat). Reasignarlo lo
@@ -184,6 +196,7 @@ def config_actual() -> dict:
         "modelo": st.session_state.get(CLAVE_MODELO) or client.modelo_actual_instacart(),
         "esfuerzo": esfuerzo, "timeout_sql_s": timeout_sql, "timeout_respuesta_s": timeout_resp,
         "revisar_sql": bool(st.session_state.get(CLAVE_REVISAR_SQL, True)),
+        "tecnica": st.session_state.get(CLAVE_TECNICA) or tecnicas.tecnica_por_defecto(),
     }
 
 
@@ -199,6 +212,7 @@ def config_iteraciones() -> dict:
         "esfuerzo": base["esfuerzo"],
         "timeout_sql_s": base["timeout_sql_s"],
         "timeout_respuesta_s": base["timeout_respuesta_s"],
+        "tecnica": base["tecnica"],
     }
 
 
@@ -227,6 +241,9 @@ def mensaje_asistente(res: ri.ResultadoInstacart, contexto: list[tuple[str, str]
             "modelo": config["modelo"],
             "esfuerzo": config["esfuerzo"],
             "timeouts_s": (config["timeout_sql_s"], config["timeout_respuesta_s"]),
+            "tecnica": res.tecnica,
+            "ejemplos_usados": [list(u) for u in res.ejemplos_usados],
+            "bloque_ejemplos": res.bloque_ejemplos,
         },
     }
 
@@ -300,6 +317,11 @@ def render_detalles(mensaje: dict) -> None:
         if meta.get("revision_sql") or meta.get("lecciones_en_prompt") or meta.get("lecciones_nuevas"):
             st.markdown("**Revisión y bitácora**")
         render_aprendizaje(meta)
+        if meta.get("tecnica"):
+            st.markdown("**Técnica de contexto**")
+            st.caption(texto_tecnica(meta["tecnica"], meta.get("ejemplos_usados") or []))
+            if meta.get("bloque_ejemplos"):
+                st.code(meta["bloque_ejemplos"], language="text")
         st.caption(
             f"Intentos de SQL: {meta.get('intentos', 0)} · contexto: {meta.get('contexto_usado', 0)} "
             f"turno(s) previo(s) · modelo: {meta.get('modelo')}"
@@ -310,6 +332,14 @@ def render_detalles(mensaje: dict) -> None:
             st.dataframe(pd.DataFrame(meta["filas"], columns=meta["columnas"]), use_container_width=True)
             if meta["n_filas"] > MAX_FILAS_HISTORIAL:
                 st.caption(f"Se muestran {MAX_FILAS_HISTORIAL} de {meta['n_filas']:,} filas.")
+
+
+def texto_tecnica(tecnica: str, usados: list) -> str:
+    """«Técnica: few_shot — ejemplos usados: N5-neg-1 (sim 0.62), ...»."""
+    if tecnica != tecnicas.FEW_SHOT:
+        return f"Técnica: {tecnica}"
+    lista = ", ".join(f"{i} (sim {s_:.2f})" for i, s_ in usados)
+    return f"Técnica: {tecnica} — ejemplos usados: {lista or 'ninguno (ninguno superó el umbral de similitud)'}"
 
 
 def render_mensaje(mensaje: dict) -> None:
@@ -377,6 +407,7 @@ def _resultado_sql(pregunta: str, contexto: list[tuple[str, str]], config: dict)
         timeout_respuesta_llm_s=config["timeout_respuesta_s"],
         # Fase 27: la bitácora del chat (en disco) y el revisor de la sentencia SQL.
         bitacora=bitacora_chat.Bitacora(), revisar_sql=config.get("revisar_sql", True),
+        tecnica=config.get("tecnica"),  # Fase 30
     )
     return dataclasses.replace(en_curso["res"])
 
@@ -457,6 +488,55 @@ def render_dashboard() -> None:
     st.subheader("🧰 Evaluación de la IA")
     st.caption("Herramientas para medir a la IA local contra la referencia del software; no cambian el panel de arriba.")
     render_iteraciones(necesidad)
+    render_necesidades_negativas(necesidad)
+    render_matriz_tecnicas()
+
+
+def render_necesidades_negativas(necesidad: str) -> None:
+    """Fase 30: el catálogo few-shot, para mostrarlo (filtrable por necesidad)."""
+    with st.expander("🧩 Necesidades negativas (ejemplos few-shot)", expanded=False):
+        st.caption("Preguntas MUY parecidas a las 10 necesidades, pero con otra métrica, dimensión o filtro (respuesta "
+                   "distinta), resueltas por un modelo grande y verificadas contra la BD real "
+                   "(`scripts/verificar_few_shot.py`). Con la técnica «Few shot», las más parecidas a la pregunta van "
+                   "al prompt como ejemplos (sin su resultado).")
+        try:
+            catalogo = few_shot.ejemplos()
+        except (OSError, ValueError) as exc:
+            st.error(f"No se pudo cargar el catálogo few-shot: {exc}", icon="⚠️")
+            return
+        opciones = ["Todas", *dashboard.NECESIDADES_IDS]
+        filtro = st.selectbox("Filtrar por necesidad de origen", opciones, key="filtro_negativas",
+                              index=opciones.index(necesidad) if necesidad in opciones else 0)
+        elegidos = [e for e in catalogo if filtro == "Todas" or e.necesidad_origen == filtro]
+        st.caption(f"{len(elegidos)} de {len(catalogo)} ejemplo(s).")
+        for e in elegidos:
+            with st.container(border=True):
+                st.markdown(f"**{e.id}** · origen {e.necesidad_origen} · {e.pregunta}")
+                st.code(e.sql, language="sql")
+                st.markdown(f"**Patrón:** {e.patron}")
+                st.dataframe(pd.DataFrame(list(e.resumen_resultado)), use_container_width=True, hide_index=True)
+                st.caption(f"Resumen REAL del resultado (no va al prompt) · resuelto por {e.modelo_grande} · "
+                           f"verificado el {e.fecha}")
+
+
+def render_matriz_tecnicas() -> None:
+    """Fase 30: la tabla del profesor (necesidades × técnicas), desde el JSON de la matriz."""
+    with st.expander("📐 Matriz de técnicas (Base | Few shot | RAG | Harness)", expanded=False):
+        data = matriz_tecnicas.cargar()
+        if data is None:
+            st.info(f"Todavía no hay resultados: corre `python -m src.llm.matriz_tecnicas` para generar "
+                    f"`{matriz_tecnicas.RUTA_JSON.as_posix()}`.", icon="ℹ️")
+            return
+        par = data.get("parametros", {})
+        st.caption(f"Generada {data.get('generado', '')} · {par.get('repeticiones')} repetición(es) × hasta "
+                   f"{par.get('iteraciones')} intento(s) · autocorrección con corte al primer acierto · árbitro: "
+                   f"chequeo automático · temperatura {par.get('temperatura')}. «termina x/R»: cadenas que terminaron "
+                   f"correctas; «1.er x/R»: acertaron en el intento 1 (aísla el efecto del few-shot). RAG y Harness: "
+                   f"{tecnicas.ETIQUETA_PENDIENTE}.")
+        for modelo in matriz_tecnicas.modelos_de(data):
+            st.markdown(f"**{modelo}**")
+            st.dataframe(pd.DataFrame(matriz_tecnicas.filas_matriz(data, modelo)), use_container_width=True,
+                         hide_index=True)
     render_entrega_ia()
 
 
@@ -559,13 +639,26 @@ ORIGEN_REDACCION = {
 }
 
 
-def render_iteracion(it: ij.Iteracion) -> None:
+_ICONOS_CAMBIO = {ij.MEJORO: "⬆️ mejoró", ij.EMPEORO: "⬇️ empeoró", ij.IGUAL: "➡️ igual"}
+
+
+def cambios_de(corrida: ij.CorridaIteraciones) -> dict[tuple[str, int], str | None]:
+    """Fase 30: (modelo, intento) -> si mejoró/empeoró respecto al intento anterior."""
+    return {(f["modelo"], f["intento"]): f["cambio"] for f in corrida.tabla()}
+
+
+def render_iteracion(it: ij.Iteracion, cambio: str | None = None) -> None:
     """Tarjeta de UN intento, etiquetada "Intento k de N · modelo": todo lo
     que muestra (SQL, resultado crudo, redacciones, veredicto) es de ese
     intento y de ningún otro."""
     with st.container(border=True):
         st.markdown(f"##### {_ICONOS_VEREDICTO[it.veredicto]} Intento {it.numero} de {it.total} · "
-                    f"`{it.modelo}` → **{it.veredicto.capitalize()}**")
+                    f"`{it.modelo}` → **{it.veredicto.capitalize()}**"
+                    + (f" · {_ICONOS_CAMBIO[cambio]} respecto al intento {it.numero - 1}" if cambio else ""))
+        st.caption(texto_tecnica(it.tecnica, it.ejemplos_usados))
+        if it.bloque_ejemplos:
+            with st.popover("🧩 Ver los ejemplos inyectados (texto exacto)"):
+                st.code(it.bloque_ejemplos, language="text")
         if it.retroalimentacion:
             st.caption(f"↩️ Contexto que recibió este intento (lo que pasó en el intento {it.numero - 1} "
                        f"de {it.total}):")
@@ -623,7 +716,8 @@ def render_iteracion(it: ij.Iteracion) -> None:
                        "es informativo, no se pasa al modelo.")
         st.caption(
             f"Intentos de SQL: {it.intentos_sql} · veredicto: {it.origen_veredicto} · "
-            f"pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_s:.1f} s"
+            f"pipeline {it.duracion_pipeline_s:.1f} s · juez {it.duracion_juez_total_s:.1f} s · "
+            f"intento completo {it.duracion_total_s:.1f} s"
         )
 
 
@@ -644,6 +738,8 @@ def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
             col.metric(f"{etiqueta}: {r.modelo}", f"{r.pct_correctas:.0f}% correctas",
                        help=f"Iteraciones con veredicto «correcta» sobre el total de iteraciones del modelo "
                             f"(árbitro: {arbitro}).")
+        col.caption(f"🎯 Cumplió (correcta): {r.pct_correctas:.0f}% · cumplió o se acercó (correcta o parcial): "
+                    f"{r.pct_acercamiento:.0f}% de {r.n} intento(s) ejecutado(s).")
         col.caption(f"{r.correctas} correctas · {r.parciales} parciales · {r.incorrectas} incorrectas · "
                     f"{r.sin_veredicto} sin veredicto (de {r.n} ejecutadas de {corrida.n_iteraciones}"
                     + (f"; {r.no_ejecutadas} no ejecutadas porque ya convergió" if r.no_ejecutadas else "") + ")")
@@ -660,6 +756,24 @@ def render_resumen_iteraciones(corrida: ij.CorridaIteraciones) -> None:
                         f"de acuerdo con el chequeo en {r.juez_acuerdos} de {r.juez_opiniones} "
                         f"({r.juez_falsos_negativos} correctos que el juez no dio por correctos, "
                         f"{r.juez_falsos_positivos} incorrectos que dio por correctos).")
+
+
+def render_tabla_intentos(corrida: ij.CorridaIteraciones) -> None:
+    """Fase 30: todos los intentos en una tabla: qué respondió cada uno, el
+    veredicto, si mejoró o empeoró, la pista del juez y cuánto tardaron."""
+    filas = corrida.tabla()
+    if not filas:
+        return
+    st.markdown("**Intento por intento**")
+    tabla = pd.DataFrame([{
+        "Intento": f["intento"], "Modelo": f["modelo"], "Técnica": f["tecnica"],
+        "Veredicto": f"{_ICONOS_VEREDICTO[f['veredicto']]} {f['veredicto']}",
+        "Cambio": _ICONOS_CAMBIO.get(f["cambio"], "—"), "Respuesta": f["respuesta"],
+        "Pista del juez": f["pista_del_juez"] or "—", "Juez (s)": f["juez_s"], "Intento (s)": f["iteracion_s"],
+    } for f in filas])
+    st.dataframe(tabla, use_container_width=True, hide_index=True)
+    st.caption("«Pista del juez»: el diagnóstico del enfoque, ya saneado, que recibió el intento siguiente "
+               "(solo en intentos fallidos). «Cambio»: veredicto respecto al intento anterior del mismo modelo.")
 
 
 def _referencia_texto(necesidad: str, corrida: ij.CorridaIteraciones | None) -> str | None:
@@ -703,7 +817,8 @@ def render_iteraciones(necesidad: str) -> None:
                             f"de `data/referencia/{necesidad}.json`; es lo que ve el juez (nunca el modelo):")
                 st.text(referencia)
         st.caption(f"{cfg['iteraciones']} iteraciones × {len(modelos)} modelo(s): `{'`, `'.join(modelos)}` · "
-                   f"modo {ETIQUETAS_MODO[cfg['modo']].lower()} · esfuerzo {cfg['esfuerzo']} (⚙️ arriba para cambiarlo).")
+                   f"modo {ETIQUETAS_MODO[cfg['modo']].lower()} · esfuerzo {cfg['esfuerzo']} · "
+                   f"técnica {tecnicas.TECNICAS[cfg['tecnica']].etiqueta} (⚙️ arriba para cambiarlo).")
         if len(modelos) == 1:
             st.warning("El modelo pequeño y el grande son el mismo: se corre una sola vez.")
         if st.button(f"▶️ Correr {cfg['iteraciones']} iteraciones por modelo", key=f"iterar_{necesidad}",
@@ -720,11 +835,13 @@ def render_iteraciones(necesidad: str) -> None:
                 barra.progress(hechas / total, text=f"{hechas} de {total} terminados · último: "
                                                     f"{it.etiqueta} → {it.veredicto}")
                 with vivo.container():
+                    cambios = cambios_de(corrida)
                     for terminado in corrida.iteraciones:
-                        render_iteracion(terminado)
+                        render_iteracion(terminado, cambios.get((terminado.modelo, terminado.numero)))
 
             try:
-                corrida = ij.nueva_corrida(necesidad, modelos=modelos, n=cfg["iteraciones"], modo=cfg["modo"])
+                corrida = ij.nueva_corrida(necesidad, modelos=modelos, n=cfg["iteraciones"], modo=cfg["modo"],
+                                           tecnica=cfg["tecnica"])
                 corridas[necesidad] = corrida
                 ij.correr_iteraciones(
                     necesidad, modelos=modelos, corrida=corrida,
@@ -739,7 +856,8 @@ def render_iteraciones(necesidad: str) -> None:
             render_exportar_todas(corridas)
             return
 
-        st.markdown(f"**Resultado** · {corrida.timestamp} · modo {ETIQUETAS_MODO[corrida.modo].lower()} · "
+        st.markdown(f"**Resultado** · {corrida.timestamp} · técnica {corrida.tecnica} · "
+                    f"modo {ETIQUETAS_MODO[corrida.modo].lower()} · "
                     f"temperatura {corrida.temperatura} (juez {corrida.temperatura_juez}) · "
                     f"{len(corrida.iteraciones)} de {corrida.total_esperado} intentos ejecutados"
                     + (f", {corrida.total_no_ejecutadas} no ejecutados porque ya había convergido"
@@ -749,10 +867,12 @@ def render_iteraciones(necesidad: str) -> None:
                        f"{corrida.total_esperado} intentos. Se muestran todos los que alcanzaron a terminar; "
                        "los que faltan no llegaron a correr completos.", icon="⏸️")
         render_resumen_iteraciones(corrida)
+        render_tabla_intentos(corrida)
+        cambios = cambios_de(corrida)
         for pestana, modelo in zip(st.tabs(corrida.modelos), corrida.modelos):
             with pestana:
                 for it in corrida.de_modelo(modelo):
-                    render_iteracion(it)
+                    render_iteracion(it, cambios.get((it.modelo, it.numero)))
                 for k in corrida.no_ejecutadas(modelo):
                     st.info(f"⏭️ Intento {k} de {corrida.n_iteraciones} · `{modelo}` → "
                             f"{ij.texto_no_ejecutada(corrida.convergencia[modelo])}: no falló, no se corrió.")
@@ -852,6 +972,9 @@ def render_configuracion() -> None:
                "(en el panel de iteraciones, N9 usa 25 s: su self-join es pesado).")
 
     st.divider()
+    render_config_tecnica()
+
+    st.divider()
     render_config_iteraciones(modelos)
 
     st.divider()
@@ -913,6 +1036,22 @@ def render_config_bitacora() -> None:
     en_curso = bool(st.session_state.get("pregunta_en_curso"))
     st.button("🗑️ Borrar la bitácora", key="borrar_bitacora", use_container_width=True,
               disabled=not lecciones or en_curso, on_click=_borrar_bitacora)
+
+
+def render_config_tecnica() -> None:
+    """Fase 30: técnica de contexto. Las pendientes se ven, pero deshabilitadas."""
+    st.markdown("**Técnica de contexto**")
+    # selectbox y no radio: en la vista de chat no puede haber ningún radio (el radio es el selector del dashboard).
+    st.selectbox("Técnica de contexto", tecnicas.TECNICAS_ACTIVAS, key=CLAVE_TECNICA,
+             format_func=lambda t: tecnicas.TECNICAS[t].etiqueta, label_visibility="collapsed",
+             help="Base: esquema y reglas de negocio. Few shot: además, los ejemplos resueltos (necesidades "
+                  "negativas) más parecidos a la pregunta. Aplica al chat, a las iteraciones y a la entrega.")
+    for t, d in tecnicas.TECNICAS.items():
+        if d.estado == tecnicas.PENDIENTE:
+            st.checkbox(f"{d.etiqueta} — {tecnicas.ETIQUETA_PENDIENTE}", value=False, disabled=True,
+                        key=f"tecnica_pendiente_{t}", help=d.descripcion)
+    st.caption(f"Por defecto: «{tecnicas.TECNICA_DEFAULT}» (cámbialo con VENTIA_TECNICA). Few shot: hasta "
+               f"{few_shot.k_efectivo()} ejemplo(s) con similitud ≥ {few_shot.UMBRAL_SIMILITUD}.")
 
 
 def _elegir_por_defecto(clave: str, preferido: str, modelos: list[str]) -> None:
