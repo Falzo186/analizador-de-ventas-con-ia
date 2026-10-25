@@ -255,7 +255,14 @@ def coincide_con_referencia(
       exige.
     Devuelve (coincide, detalle). El detalle puede citar la referencia: es
     para el panel y el log, no para el modelo."""
-    d = nec.DEFINICIONES[necesidad]
+    return coincide_con_forma(nec.DEFINICIONES[necesidad], filas_referencia, filas)
+
+
+def coincide_con_forma(d, filas_referencia: list[dict], filas: list | None) -> tuple[bool, str]:
+    """El comparador de `coincide_con_referencia` para cualquier `d` con la
+    forma de una `DefNecesidad` (tipo, columna_nombre, columnas_nombre_extra,
+    columna_valor, columnas_valor_extra, filas_esperadas). Fase 30: lo usa la
+    validación fuera de muestra con preguntas que no son de las 10 necesidades."""
     if not filas_referencia:
         return False, "la referencia no tiene filas"
     if not filas:

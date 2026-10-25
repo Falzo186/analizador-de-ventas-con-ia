@@ -109,6 +109,8 @@ configuración:
 |---|---|---|
 | `VENTIA_LLM_MODELO_INSTACART` | `qwen2.5-coder:1.5b` | Modelo **inicial** del selector ⚙️, si está descargado; si no, el primero disponible. También es el modelo del chat por línea de comandos. El default se eligió con el benchmark de 3 modelos de la Fase 5. |
 | `OLLAMA_HOST` | `http://localhost:11434` | La lee la librería `ollama`: dónde está el servidor. |
+| `VENTIA_TECNICA` | `base` | Fase 30: técnica de contexto del prompt de SQL (`base` o `few_shot`; `rag` y `harness` están pendientes). Ver [`docs/FEW_SHOT.md`](docs/FEW_SHOT.md). |
+| `VENTIA_FEWSHOT_K` | `2` | Fase 30: cuántos ejemplos resueltos inyecta la técnica `few_shot` como máximo. |
 
 Las variables de la etapa Northwind (`VENTIA_DB_PATH`, `VENTIA_LLM_MODELO`)
 **se eliminaron del código** en la Fase 7. Ya no tienen ningún efecto.
@@ -259,6 +261,8 @@ documento enlazado.
 | 10 | Entregable del curso: JSON individual por necesidad, del software y de la IA local | `c27e4ff` | [`FASE10_REPORTE.md`](docs/FASE10_REPORTE.md) |
 | 11-23 | Iteraciones con juez IA, panel por intento, autocorrección encadenada | `6079467` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) |
 | 24 | Las 11 necesidades se reemplazan por 10 de una sola consulta; retroalimentación entre intentos sin fuga de la respuesta; pruebas con 8B/7B | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md), «Fase 24» |
+| 25-29 | Árbitro automático, corte al primer acierto, bitácora del chat, 5 necesidades nuevas, límite propio de N9 | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) |
+| 30 | Técnica few-shot con «necesidades negativas» (14 ejemplos verificados), registro de técnicas (RAG/Harness pendientes), matriz de técnicas y tabla por intento | ver `git log` | [`FEW_SHOT.md`](docs/FEW_SHOT.md), [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) «Fase 30» |
 
 El código de la etapa anterior (chat sobre Northwind, simulador de ventas
 sintéticas y evaluador del banco de Northwind) está archivado en

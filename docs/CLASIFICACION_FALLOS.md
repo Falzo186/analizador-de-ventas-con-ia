@@ -1310,3 +1310,173 @@ N3/N4. Por eso N9 mide ya más «seguir la plantilla» que «descubrir el self-j
   siempre (`test_modelos_cargados_lee_api_ps`, `test_construir_ficha_coincide_con_dataset_instacart_md`).
 - El PDF quedó rancio por el cambio de la limitación de N9: `pdf_vigente` lo detectó (la comprobación de
   contenido de la Fase 28). Se regeneró y vuelve a estar vigente.
+
+## Fase 30 — Few-shot con «necesidades negativas» y matriz de técnicas (Base | Few shot | RAG | Harness)
+
+**Pedido del profesor:**
+- Por cada necesidad (A.1), crear preguntas muy parecidas pero distintas (A.2), resolverlas con un modelo grande e
+  incluirlas en el código como ejemplos resueltos que se mandan al modelo local (few-shot).
+- Comparar en una tabla, con las necesidades como filas y Base | Few shot | RAG | Harness como columnas.
+- RAG y Harness quedan para después: registradas como «pendiente», **sin implementar**.
+
+### 1. Qué se implementó
+
+- **Catálogo** (`src/llm/few_shot/ejemplos.json`, versionado): 14 ejemplos, uno por necesidad y dos para N2, N4,
+  N5 y N10. Los escribió y resolvió `claude-opus-5-5`.
+  - `scripts/verificar_few_shot.py` ejecuta cada SQL con la guarda y la conexión read_only reales, exige filas y
+    comprueba que el resultado **no** coincida con el de su necesidad (comparador automático y valores clave).
+  - Pasaron 14/14, de 0.0 a 1.1 s cada uno. En la primera pasada, el verificador rechazó N10-neg-1 y N10-neg-2
+    porque mostraban el total de pedidos (3,346,083), que es un valor clave de N10. Se quitó esa columna.
+  - Tabla del catálogo y reglas: `docs/FEW_SHOT.md`.
+- **Módulo few-shot** (`src/llm/few_shot/__init__.py`; es un paquete porque `few_shot.py` y la carpeta
+  `few_shot/` no pueden coexistir):
+  - recuperación TF-IDF coseno en Python puro (TF binario, sin acentos ni stopwords, plurales simples);
+  - k = 2 (`VENTIA_FEWSHOT_K`) y umbral 0.4;
+  - el bloque lleva la pregunta, el SQL y el patrón, nunca el resultado.
+- **Registro de técnicas** (`src/llm/tecnicas.py`): base y few_shot activas; rag y harness pendientes (error
+  claro; en la UI se ven deshabilitadas con «pendiente (siguiente fase)»).
+  - Técnica por defecto: **base**. El interruptor es `tecnicas.TECNICA_DEFAULT` o `VENTIA_TECNICA=few_shot`.
+- **Integración:**
+  - el bloque va en el prompt de sistema de SQL, después del esquema y las reglas de negocio y antes de la
+    bitácora del chat y de la pregunta (`prompts_instacart._sistema_sql`, parámetro `ejemplos`);
+  - aplica al chat, al panel de iteraciones (autocorrección e independiente: va en **todos** los intentos), a la
+    entrega de IA, a `--tecnica` del CLI de iteraciones y a ⚙️ → «Técnica de contexto»;
+  - con base, el prompt es **idéntico byte por byte** al de antes (test contra un golden guardado antes del
+    cambio).
+- **Trazabilidad:**
+  - cada intento guarda `tecnica`, `ejemplos_usados` [(id, similitud)] y `bloque_ejemplos`, en el JSON, el TXT y
+    los exportes;
+  - en el panel, cada intento muestra «Técnica: few_shot — ejemplos usados: N5-neg-1 (sim 0.83), …» y un
+    popover con el texto exacto inyectado.
+- **Visualización por intento** (pedido adicional):
+  - tabla «Intento por intento» con lo que respondió cada intento, el veredicto (correcta / parcial /
+    incorrecta), el cambio respecto al anterior (⬆️ mejoró / ⬇️ empeoró / ➡️ igual), la pista del juez que
+    recibió el siguiente intento, lo que tardó el juez y lo que tardó el intento completo;
+  - por modelo, «cumplió» (% correctas) y «cumplió o se acercó» (% correctas + parciales), calculados solo con
+    los veredictos;
+  - lo mismo en el log TXT/JSON (`tabla_iteraciones`, `pct_acercamiento`, `duracion_total_s`).
+- **UI:** en el dashboard, «🧩 Necesidades negativas» (catálogo filtrable por necesidad, con el resumen real del
+  resultado) y «📐 Matriz de técnicas» (lee `docs/resultados/matriz_tecnicas.json`; si no existe, lo avisa sin
+  romper la app).
+- **Comparador:** `retroalimentacion.coincide_con_forma` es el mismo comparador de antes, separado para aceptar
+  cualquier forma de respuesta. `coincide_con_referencia` lo llama sin cambiar su comportamiento. Lo usa la
+  validación fuera de muestra con un adaptador delgado (`FormaRespuesta`).
+
+### 2. Tamaño del prompt y contexto (num_ctx)
+
+`client.py` no fija `num_ctx`, así que Ollama carga llama3.1:8b y qwen2.5-coder:7b con **4,096 tokens** (según
+`/api/ps`). Tokens reales del prompt de SQL (`prompt_eval_count`, `scripts/medir_prompt_fase30.py`):
+
+| Prompt | llama3.1:8b | qwen2.5-coder:7b |
+|---|---|---|
+| base (N2) | 3,277 | 3,363 |
+| few_shot (N2, 2 ejemplos) | 3,695 (+418) | 3,787 (+424) |
+| few_shot + bitácora llena (peor caso del chat) | 3,937 | **4,029** |
+| few_shot + retroalimentación de autocorrección (988 caracteres) | 3,811 | 3,899 |
+
+- **No hubo truncamiento** en ninguna medición: los tokens con el contexto del proyecto fueron iguales a los
+  medidos con 16k.
+- **El margen es muy chico:** a esos números hay que sumar la salida (un SQL, ~100-250 tokens).
+  - Con few_shot + la bitácora llena en qwen, o con una retroalimentación más larga en autocorrección, se pasa de
+    4,096. Ollama descartaría el inicio del contexto (el esquema) sin avisar.
+  - El intento 1 de la matriz (sin retroalimentación ni bitácora) queda dentro con holgura: «acierto al 1.er
+    intento» no está afectado.
+- **Propuesta (no aplicada):** pasar `options={"num_ctx": 8192}` en `client.chat_con_modelo`, configurable con una
+  variable de entorno.
+  - El costo es ~0.5-1 GB más de VRAM por el KV cache; cabe en la RTX 5060 de 8 GB con un solo modelo cargado.
+  - No se cambió en silencio: lo decide el usuario.
+
+### 3. Matriz de técnicas (números reales)
+
+Por el presupuesto de pruebas cortas (10-15 min) se corrió **1 repetición × hasta 2 intentos** (no 3×3): 2 modelos
+× 2 técnicas × 10 necesidades = 40 cadenas en ~10 min.
+- Autocorrección con corte al primer acierto, árbitro chequeo automático, temperatura 0.5 y `medir_juez=False`:
+  sin la opinión extra del juez, el juez solo diagnostica los intentos fallidos.
+- La corrida completa es `python -m src.llm.matriz_tecnicas` (defaults: 3 repeticiones × 3 intentos), con
+  `--reanudar` para continuar.
+
+| Necesidad | llama · Base | llama · Few shot | qwen · Base | qwen · Few shot | RAG | Harness |
+|---|---|---|---|---|---|---|
+| N1 | 1/1 · 1/1 | 0/1 · 0/1 | 1/1 · 1/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N2 | 0/1 · 0/1 | 0/1 · 0/1 | 1/1 · 0/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N3 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N4 | 1/1 · 1/1 | 1/1 · 1/1 | 0/1 · 0/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N5 | 0/1 · 0/1 | 1/1 · 1/1 | 0/1 · 0/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N6 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N7 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N8 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N9 | 0/1 · 0/1 | 1/1 · 0/1 | 1/1 · 1/1 | 1/1 · 1/1 | pendiente | pendiente |
+| N10 | 0/1 · 0/1 | 1/1 · 0/1 | 0/1 · 0/1 | 0/1 · 0/1 | pendiente | pendiente |
+| **TOTAL** | **6/10 · 6/10** | **8/10 · 6/10** | **7/10 · 6/10** | **9/10 · 9/10** | pendiente | pendiente |
+
+(Cada celda es «termina correcto · acierto al 1.er intento».)
+
+- **qwen2.5-coder:7b:** few-shot sube el acierto al 1.er intento de 6/10 a 9/10 (N2, N4 y N5) sin bajar ninguna.
+- **llama3.1:8b:** el acierto al 1.er intento queda igual (6/10), pero cambia de necesidades.
+  - Gana N5: el patrón de «promedio por pedido» funcionó.
+  - Pierde N1: inventó filtros `HAVING AVG(...) < 30 AND COUNT(...) > 5` que nadie pidió. No copió el ejemplo,
+    pero con una muestra no se puede descartar que el ejemplo influyera.
+  - «Termina correcto» sube de 6/10 a 8/10: N9 y N10 se corrigieron en el intento 2 con los ejemplos presentes.
+- **N10 sigue fallando en los dos modelos.** Con llama, la autocorrección lo arregla; con qwen, no.
+- **Latencia media por intento** (pipeline + juez): llama 5.1 s (base) → 5.0 s (few_shot); qwen 6.9 s → 5.2 s.
+  Los ~420 tokens extra no se notan; hay menos diagnósticos del juez porque hay menos fallos.
+- **Todos los ejemplos inyectados** al intento 1 son de la familia correcta (top-1 = la hermana en las 10).
+
+### 4. Validación fuera de muestra (8 preguntas libres, llama3.1:8b, temperatura 0.0, sin redacción)
+
+| Pregunta | Base | Few shot | Ejemplos recibidos |
+|---|---|---|---|
+| X1 ¿Qué departamento tiene más pedidos? (produce, 2,506,247) | ✗ | ✗ | ninguno |
+| X2 ¿Cuántos usuarios distintos hay en el dataset? | ✓ | ✓ | N5-neg-2 (0.44) |
+| X3 ¿Cuántos productos hay en el catálogo? | ✓ | ✓ | N7-neg-1 (0.50) |
+| X4 ¿Cuál es el producto más vendido? | ✓ | ✓ | ninguno |
+| X5 ¿Cuántos pedidos hizo en total el usuario 1? | ✓ | ✓ | ninguno |
+| X6 ¿Cuál es el número máximo de pedidos que tiene un usuario? | ✗ | ✗ | ninguno |
+| X7 ¿Cuántos pasillos tiene el departamento snacks? | ✗ | ✗ | N7-neg-1 (0.47) |
+| X8 ¿Qué producto se agrega primero al carrito con más frecuencia? | ✓ | ✗ | N5-neg-1 (0.46) |
+
+- **(b) Reciben ejemplos 4 de 8** (X2, X3, X7, X8). Las otras 4 reciben cero y producen el **mismo SQL que
+  base**. X1 repite el JOIN roto `orders JOIN products ON o.order_id = p.product_id`, que few-shot no puede
+  arreglar porque ningún ejemplo se parece lo suficiente.
+- **(a) Según el comparador, few_shot empeora 1 (X8).** Revisando el SQL, **base también estaba mal**: ninguno de
+  los dos filtra `add_to_cart_order = 1` y los dos sacan el producto más vendido.
+  - Base pasó el comparador por coincidencia: devolvió solo el nombre, y Banana es también el producto que más
+    se agrega primero (la forma «único» acepta el identificador solo).
+  - Few_shot agregó el conteo (491,291 ≠ 115,521) y el comparador lo rechazó.
+  - Es un **falso positivo del comparador en base**, no un empeoramiento real del razonamiento. Se reporta
+    tal cual y **no se ajustó la recuperación a esta prueba** (sería sobreajustar).
+- **La mejora en las 10 necesidades es mayor que en las preguntas libres (0 mejoras), y es lo esperable:** los
+  ejemplos se diseñaron parecidos a las necesidades. Few-shot ayuda donde hay una hermana curada; fuera de eso,
+  con este umbral, recibe ejemplos poco relacionados en la mitad de las preguntas y no las mejora.
+
+### 5. Límites
+
+- **Muestra pequeña:** 1 repetición por celda, por el presupuesto de pruebas cortas. A temperatura 0.5 una sola
+  repetición es ruidosa; las diferencias de ±1 por necesidad no son concluyentes.
+- **Sesgo de diseño:** las hermanas se escribieron mirando las 10 necesidades, así que la mejora sobre ellas está
+  inflada respecto a preguntas nuevas, como muestra la validación fuera de muestra.
+- **La recuperación es léxica:** palabras sueltas compartidas («producto», «carrito») bastan para pasar el umbral
+  0.4 en preguntas no relacionadas. Un umbral más alto dejaría fuera a la hermana de N1 (0.45).
+- **El contexto de 4,096 tokens** deja poco margen para few_shot + bitácora o few_shot + retroalimentación larga
+  (sección 2).
+
+### 6. Verificación
+
+- `tests/test_fase30_few_shot.py` (41 tests):
+  - esquema e ids del catálogo, 14 ejemplos y guarda estática;
+  - con la BD: cada ejemplo ejecuta y difiere de su referencia;
+  - anti-fuga del bloque para las 10 necesidades (enfoque de la Fase 24);
+  - top-1 = hermana en las 10 y cero ejemplos para «capital de Francia»;
+  - prompt base idéntico al golden; rag/harness pendientes;
+  - técnica, ids, similitud y «mejoró» en los logs; métricas y exportes de la matriz;
+  - adaptador del comparador; UI con AppTest.
+- Pruebas existentes ajustadas por el cambio:
+  - `test_ollama_caido_se_informa_sin_romper_la_app`: el selector de técnica tampoco es de modelo, y la prueba
+    mantiene su intención.
+  - El selector de técnica es un `selectbox` y no un radio, porque en la vista de chat no puede haber radios
+    (lo exige `test_layout_vista_alternante...`).
+- `python -m pytest -q` (completo):
+  - línea base antes de la fase: `2 failed, 588 passed, 2 xpassed`;
+  - al final: `2 failed, 629 passed, 2 xpassed in 173.80s`.
+  - Son las mismas 2 fallas del entorno (`test_modelos_cargados_lee_api_ps`,
+    `test_construir_ficha_coincide_con_dataset_instacart_md`).

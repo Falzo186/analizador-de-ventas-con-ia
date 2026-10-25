@@ -1,0 +1,59 @@
+[
+  {
+    "id": "X1",
+    "pregunta": "¿Qué departamento tiene más pedidos?",
+    "sql_referencia": "SELECT d.department, COUNT(DISTINCT op.order_id) AS pedidos FROM order_products op JOIN products p ON op.product_id = p.product_id JOIN departments d ON p.department_id = d.department_id GROUP BY d.department ORDER BY pedidos DESC LIMIT 10",
+    "tipo": "unico", "columna_nombre": "department", "columna_valor": "pedidos",
+    "respuesta_esperada": "produce, con 2,506,247 pedidos",
+    "nota": "Antes falló por un JOIN mal hecho (departments unido directo a order_products)."
+  },
+  {
+    "id": "X2",
+    "pregunta": "¿Cuántos usuarios distintos hay en el dataset?",
+    "sql_referencia": "SELECT COUNT(DISTINCT user_id) AS usuarios FROM orders",
+    "tipo": "escalar", "columna_nombre": null, "columna_valor": "usuarios",
+    "respuesta_esperada": "206,209 usuarios"
+  },
+  {
+    "id": "X3",
+    "pregunta": "¿Cuántos productos hay en el catálogo?",
+    "sql_referencia": "SELECT COUNT(*) AS productos FROM products",
+    "tipo": "escalar", "columna_nombre": null, "columna_valor": "productos",
+    "respuesta_esperada": "49,688 productos"
+  },
+  {
+    "id": "X4",
+    "pregunta": "¿Cuál es el producto más vendido?",
+    "sql_referencia": "SELECT p.product_name, COUNT(*) AS veces_comprado FROM order_products op JOIN products p ON op.product_id = p.product_id GROUP BY p.product_name ORDER BY veces_comprado DESC LIMIT 10",
+    "tipo": "unico", "columna_nombre": "product_name", "columna_valor": "veces_comprado",
+    "respuesta_esperada": "Banana, 491,291 veces"
+  },
+  {
+    "id": "X5",
+    "pregunta": "¿Cuántos pedidos hizo en total el usuario 1?",
+    "sql_referencia": "SELECT COUNT(*) AS pedidos FROM orders WHERE user_id = 1",
+    "tipo": "escalar", "columna_nombre": null, "columna_valor": "pedidos",
+    "respuesta_esperada": "11 pedidos"
+  },
+  {
+    "id": "X6",
+    "pregunta": "¿Cuál es el número máximo de pedidos que tiene un usuario?",
+    "sql_referencia": "SELECT MAX(order_number) AS max_pedidos FROM orders",
+    "tipo": "escalar", "columna_nombre": null, "columna_valor": "max_pedidos",
+    "respuesta_esperada": "100 pedidos (tope del dataset)"
+  },
+  {
+    "id": "X7",
+    "pregunta": "¿Cuántos pasillos tiene el departamento snacks?",
+    "sql_referencia": "SELECT COUNT(DISTINCT p.aisle_id) AS pasillos FROM products p JOIN departments d ON p.department_id = d.department_id WHERE d.department = 'snacks'",
+    "tipo": "escalar", "columna_nombre": null, "columna_valor": "pasillos",
+    "respuesta_esperada": "11 pasillos"
+  },
+  {
+    "id": "X8",
+    "pregunta": "¿Qué producto se agrega primero al carrito con más frecuencia?",
+    "sql_referencia": "SELECT p.product_name, COUNT(*) AS veces_primero FROM order_products op JOIN products p ON op.product_id = p.product_id WHERE op.add_to_cart_order = 1 GROUP BY p.product_name ORDER BY veces_primero DESC LIMIT 10",
+    "tipo": "unico", "columna_nombre": "product_name", "columna_valor": "veces_primero",
+    "respuesta_esperada": "Banana, 115,521 veces primero en el carrito"
+  }
+]

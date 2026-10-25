@@ -18,6 +18,11 @@ frente a 100 % nuevos). Siguen siendo una sola consulta cada una. N3-N7 no
 cambiaron. Las preguntas anteriores de N1, N2, N8, N9 y N10 están en el
 historial de git y en `docs/CLASIFICACION_FALLOS.md` («Fase 24»).
 
+**Fase 30:** cada necesidad tiene una o dos «necesidades negativas» (preguntas
+parecidas con otra respuesta, resueltas por un modelo grande y verificadas contra
+la BD) que la técnica few-shot manda como ejemplos al modelo local. No cambian
+ninguna de las 10 definiciones de abajo. Ver `docs/FEW_SHOT.md`.
+
 Ningún número de este documento se copia a mano en el código: el resultado
 de cada necesidad sale de ejecutar su SQL (`python -m src.analytics --todas`)
 y se guarda en `data/referencia/Nx.json` con el contrato de siempre
