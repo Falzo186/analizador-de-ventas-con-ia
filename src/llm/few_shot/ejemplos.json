@@ -1,0 +1,457 @@
+[
+  {
+    "id": "N1-neg-1",
+    "necesidad_origen": "N1",
+    "pregunta": "¿Qué clientes han comprado más productos distintos?",
+    "palabras_clave": [
+      "clientes",
+      "user_id",
+      "productos distintos",
+      "compra sostenida",
+      "pedidos totales",
+      "ranking de clientes",
+      "fidelización"
+    ],
+    "sql": "SELECT o.user_id, COUNT(DISTINCT op.product_id) AS productos_distintos FROM orders o JOIN order_products op ON o.order_id = op.order_id GROUP BY o.user_id ORDER BY productos_distintos DESC, o.user_id LIMIT 10",
+    "patron": "Para rankear clientes, agrupa por orders.user_id; si la métrica está en order_products, une orders con order_products por order_id y ordena por la métrica con un desempate.",
+    "resumen_resultado": [
+      {
+        "user_id": 182401,
+        "productos_distintos": 728
+      },
+      {
+        "user_id": 75304,
+        "productos_distintos": 704
+      },
+      {
+        "user_id": 151994,
+        "productos_distintos": 643
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N2-neg-1",
+    "necesidad_origen": "N2",
+    "pregunta": "¿Qué pasillo tiene la tasa de recompra más alta?",
+    "palabras_clave": [
+      "pasillo",
+      "aisle",
+      "tasa de recompra promedio",
+      "recompra",
+      "reordered",
+      "proporción de líneas"
+    ],
+    "sql": "SELECT a.aisle, COUNT(*) AS veces_comprado, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) AS recompras, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra FROM order_products op JOIN products p ON op.product_id = p.product_id JOIN aisles a ON p.aisle_id = a.aisle_id GROUP BY a.aisle ORDER BY tasa_recompra DESC, a.aisle LIMIT 10",
+    "patron": "La tasa de recompra de un grupo es la proporción de TODAS sus líneas con reordered = 1 (SUM(CASE ...) * 1.0 / COUNT(*)), no el promedio de las tasas de cada producto; se llega al grupo por products.",
+    "resumen_resultado": [
+      {
+        "aisle": "milk",
+        "veces_comprado": 923659,
+        "recompras": 722128,
+        "tasa_recompra": 0.7818
+      },
+      {
+        "aisle": "water seltzer sparkling water",
+        "veces_comprado": 878150,
+        "recompras": 640988,
+        "tasa_recompra": 0.7299
+      },
+      {
+        "aisle": "fresh fruits",
+        "veces_comprado": 3792661,
+        "recompras": 2726251,
+        "tasa_recompra": 0.7188
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N2-neg-2",
+    "necesidad_origen": "N2",
+    "pregunta": "¿Qué departamento tiene la tasa de recompra más baja?",
+    "palabras_clave": [
+      "departamento",
+      "department",
+      "tasa de recompra promedio",
+      "más baja",
+      "recompra",
+      "reordered"
+    ],
+    "sql": "SELECT d.department, COUNT(*) AS veces_comprado, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) AS recompras, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra FROM order_products op JOIN products p ON op.product_id = p.product_id JOIN departments d ON p.department_id = d.department_id GROUP BY d.department ORDER BY tasa_recompra ASC, d.department LIMIT 10",
+    "patron": "Tasa de un departamento = líneas recompradas / todas sus líneas, en una sola agregación por departments.department (unido por products); para la más baja, ORDER BY tasa ASC.",
+    "resumen_resultado": [
+      {
+        "department": "personal care",
+        "veces_comprado": 468693,
+        "recompras": 150855,
+        "tasa_recompra": 0.3219
+      },
+      {
+        "department": "pantry",
+        "veces_comprado": 1956819,
+        "recompras": 679799,
+        "tasa_recompra": 0.3474
+      },
+      {
+        "department": "international",
+        "veces_comprado": 281155,
+        "recompras": 103938,
+        "tasa_recompra": 0.3697
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N3-neg-1",
+    "necesidad_origen": "N3",
+    "pregunta": "De los productos del departamento frozen con al menos 100 compras, ¿cuáles tienen la tasa de recompra más alta?",
+    "palabras_clave": [
+      "productos",
+      "tasa de recompra",
+      "más alta",
+      "al menos",
+      "compras",
+      "fieles",
+      "frozen"
+    ],
+    "sql": "SELECT p.product_name, COUNT(*) AS veces_comprado, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra FROM order_products op JOIN products p ON op.product_id = p.product_id JOIN departments d ON p.department_id = d.department_id WHERE d.department = 'frozen' GROUP BY p.product_name HAVING COUNT(*) >= 100 ORDER BY tasa_recompra DESC, p.product_name LIMIT 10",
+    "patron": "El filtro de grupo (un departamento) va en WHERE antes de agrupar; el mínimo de compras por producto va en HAVING COUNT(*) >= N; luego ORDER BY la tasa.",
+    "resumen_resultado": [
+      {
+        "product_name": "A+ Cinnamon Sweet Potato Pancakes",
+        "veces_comprado": 2646,
+        "tasa_recompra": 0.8107
+      },
+      {
+        "product_name": "Eggo Chocolate Chip Pancakes 12 Count",
+        "veces_comprado": 677,
+        "tasa_recompra": 0.7755
+      },
+      {
+        "product_name": "Chicken A La King",
+        "veces_comprado": 181,
+        "tasa_recompra": 0.768
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N4-neg-1",
+    "necesidad_origen": "N4",
+    "pregunta": "De los productos con al menos 200 compras, ¿cuáles tienen la tasa de recompra más baja?",
+    "palabras_clave": [
+      "productos",
+      "tasa de recompra",
+      "más baja",
+      "al menos",
+      "compras",
+      "abandonan",
+      "no se recompran"
+    ],
+    "sql": "SELECT p.product_name, COUNT(*) AS veces_comprado, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra FROM order_products op JOIN products p ON op.product_id = p.product_id GROUP BY p.product_name HAVING COUNT(*) >= 200 ORDER BY tasa_recompra ASC, p.product_name LIMIT 10",
+    "patron": "Para la tasa más baja, ORDER BY tasa ASC sin excluir las tasas 0 (no agregues HAVING recompras > 0); el único filtro es el mínimo de compras en HAVING COUNT(*) >= N.",
+    "resumen_resultado": [
+      {
+        "product_name": "Ground Sage",
+        "veces_comprado": 214,
+        "tasa_recompra": 0.0047
+      },
+      {
+        "product_name": "Ground Mustard",
+        "veces_comprado": 319,
+        "tasa_recompra": 0.0219
+      },
+      {
+        "product_name": "Organic Ground Cloves",
+        "veces_comprado": 469,
+        "tasa_recompra": 0.0235
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N4-neg-2",
+    "necesidad_origen": "N4",
+    "pregunta": "Entre los pasillos con al menos 1,000 compras, ¿cuáles tienen la tasa de recompra más baja?",
+    "palabras_clave": [
+      "pasillos",
+      "aisle",
+      "tasa de recompra",
+      "más baja",
+      "al menos",
+      "compras",
+      "recompran menos"
+    ],
+    "sql": "SELECT a.aisle, COUNT(*) AS veces_comprado, SUM(CASE WHEN op.reordered = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS tasa_recompra FROM order_products op JOIN products p ON op.product_id = p.product_id JOIN aisles a ON p.aisle_id = a.aisle_id GROUP BY a.aisle HAVING COUNT(*) >= 1000 ORDER BY tasa_recompra ASC, a.aisle LIMIT 10",
+    "patron": "Mismo cálculo de tasa para cualquier grupo; el mínimo de compras va en HAVING y la más baja es ORDER BY tasa ASC, sin filtrar los ceros.",
+    "resumen_resultado": [
+      {
+        "aisle": "spices seasonings",
+        "veces_comprado": 221371,
+        "tasa_recompra": 0.1529
+      },
+      {
+        "aisle": "baking supplies decor",
+        "veces_comprado": 24786,
+        "tasa_recompra": 0.1676
+      },
+      {
+        "aisle": "kitchen supplies",
+        "veces_comprado": 9620,
+        "tasa_recompra": 0.1948
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N5-neg-1",
+    "necesidad_origen": "N5",
+    "pregunta": "¿Cuántos productos recomprados tiene en promedio un pedido?",
+    "palabras_clave": [
+      "promedio",
+      "por pedido",
+      "pedido",
+      "recomprados",
+      "carrito",
+      "productos por pedido"
+    ],
+    "sql": "SELECT AVG(recompradas) AS promedio_recomprados_por_pedido FROM (SELECT order_id, SUM(CASE WHEN reordered = 1 THEN 1 ELSE 0 END) AS recompradas FROM order_products GROUP BY order_id) t",
+    "patron": "Para un promedio POR PEDIDO, agrupa primero por order_id en una subconsulta (una fila por pedido) y aplica AVG afuera; AVG directo sobre las líneas da otro número.",
+    "resumen_resultado": [
+      {
+        "promedio_recomprados_por_pedido": 5.9638
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N5-neg-2",
+    "necesidad_origen": "N5",
+    "pregunta": "¿Cuántos pasillos distintos tiene en promedio un pedido?",
+    "palabras_clave": [
+      "promedio",
+      "por pedido",
+      "pedido",
+      "pasillos distintos",
+      "aisle",
+      "carrito"
+    ],
+    "sql": "SELECT AVG(pasillos) AS promedio_pasillos_por_pedido FROM (SELECT op.order_id, COUNT(DISTINCT p.aisle_id) AS pasillos FROM order_products op JOIN products p ON op.product_id = p.product_id GROUP BY op.order_id) t",
+    "patron": "Promedio por pedido: subconsulta con GROUP BY order_id que calcula la cifra de cada pedido (aquí COUNT(DISTINCT ...)) y AVG en la consulta de afuera.",
+    "resumen_resultado": [
+      {
+        "promedio_pasillos_por_pedido": 7.271
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N6-neg-1",
+    "necesidad_origen": "N6",
+    "pregunta": "¿Qué día de la semana tiene el menor promedio de días entre pedidos?",
+    "palabras_clave": [
+      "días entre pedidos",
+      "days_since_prior_order",
+      "promedio",
+      "día de la semana",
+      "order_dow",
+      "vuelve a comprar"
+    ],
+    "sql": "SELECT order_dow, AVG(days_since_prior_order) AS promedio_dias, COUNT(*) AS pedidos FROM orders WHERE days_since_prior_order IS NOT NULL GROUP BY order_dow ORDER BY promedio_dias ASC, order_dow",
+    "patron": "days_since_prior_order está en orders (NULL en el primer pedido, censurado en 30); AVG ya ignora los NULL; para comparar grupos, GROUP BY la dimensión y ordena por el promedio.",
+    "resumen_resultado": [
+      {
+        "order_dow": 5,
+        "promedio_dias": 10.5083,
+        "pedidos": 427295
+      },
+      {
+        "order_dow": 4,
+        "promedio_dias": 10.5229,
+        "pedidos": 401903
+      },
+      {
+        "order_dow": 3,
+        "promedio_dias": 10.7683,
+        "pedidos": 411314
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N7-neg-1",
+    "necesidad_origen": "N7",
+    "pregunta": "¿Qué departamento tiene más productos distintos en el catálogo?",
+    "palabras_clave": [
+      "departamento",
+      "pasillo",
+      "productos distintos",
+      "catálogo",
+      "surtido",
+      "a la venta"
+    ],
+    "sql": "SELECT d.department, COUNT(*) AS productos FROM products p JOIN departments d ON p.department_id = d.department_id GROUP BY d.department ORDER BY productos DESC, d.department LIMIT 10",
+    "patron": "El catálogo es la tabla products (una fila por producto): para contar productos por grupo basta products JOIN departments/aisles y COUNT(*), sin order_products.",
+    "resumen_resultado": [
+      {
+        "department": "personal care",
+        "productos": 6563
+      },
+      {
+        "department": "snacks",
+        "productos": 6264
+      },
+      {
+        "department": "pantry",
+        "productos": 5371
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N8-neg-1",
+    "necesidad_origen": "N8",
+    "pregunta": "¿Qué día de la semana concentra el mayor volumen de pedidos?",
+    "palabras_clave": [
+      "día de la semana",
+      "order_dow",
+      "volumen de pedidos",
+      "más pedidos",
+      "concentra"
+    ],
+    "sql": "SELECT order_dow, COUNT(*) AS pedidos FROM orders GROUP BY order_dow ORDER BY pedidos DESC, order_dow",
+    "patron": "Los pedidos y sus columnas de tiempo (order_dow, order_hour_of_day) están en orders: COUNT(*) por la columna y ORDER BY el conteo DESC; los códigos son anónimos, no los traduzcas.",
+    "resumen_resultado": [
+      {
+        "order_dow": 0,
+        "pedidos": 600905
+      },
+      {
+        "order_dow": 1,
+        "pedidos": 587478
+      },
+      {
+        "order_dow": 2,
+        "pedidos": 467260
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N9-neg-1",
+    "necesidad_origen": "N9",
+    "pregunta": "¿Qué producto se compra junto con más frecuencia con Organic Whole Milk?",
+    "palabras_clave": [
+      "se compran juntos",
+      "juntos",
+      "mismo pedido",
+      "combo",
+      "par",
+      "productos"
+    ],
+    "sql": "SELECT p.product_name, COUNT(*) AS pedidos_juntos FROM order_products a JOIN order_products b ON a.order_id = b.order_id AND a.product_id <> b.product_id JOIN products p ON b.product_id = p.product_id WHERE a.product_id = (SELECT product_id FROM products WHERE product_name = 'Organic Whole Milk') GROUP BY p.product_name ORDER BY pedidos_juntos DESC, p.product_name LIMIT 10",
+    "patron": "Productos del mismo pedido: une order_products consigo misma por order_id con product_id distintos; sin un producto fijo, agrupa por los dos product_id (a.product_id < b.product_id) y une products solo al final.",
+    "resumen_resultado": [
+      {
+        "product_name": "Banana",
+        "pedidos_juntos": 32685
+      },
+      {
+        "product_name": "Bag of Organic Bananas",
+        "pedidos_juntos": 27599
+      },
+      {
+        "product_name": "Organic Strawberries",
+        "pedidos_juntos": 24767
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N10-neg-1",
+    "necesidad_origen": "N10",
+    "pregunta": "¿Qué porcentaje de los pedidos tiene más de 15 productos?",
+    "palabras_clave": [
+      "porcentaje",
+      "%",
+      "pedidos",
+      "más de",
+      "productos",
+      "nivel pedido"
+    ],
+    "sql": "SELECT SUM(CASE WHEN lineas > 15 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pct_pedidos_mas_de_15, SUM(CASE WHEN lineas > 15 THEN 1 ELSE 0 END) AS pedidos_mas_de_15 FROM (SELECT order_id, COUNT(*) AS lineas FROM order_products GROUP BY order_id) t",
+    "patron": "Para un % de PEDIDOS, resume cada pedido en una subconsulta (GROUP BY order_id) y afuera cuenta los que cumplen con SUM(CASE ...) * 100.0 / COUNT(*); no calcules el % sobre las líneas.",
+    "resumen_resultado": [
+      {
+        "pct_pedidos_mas_de_15": 19.4217,
+        "pedidos_mas_de_15": 649867
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  },
+  {
+    "id": "N10-neg-2",
+    "necesidad_origen": "N10",
+    "pregunta": "¿Qué porcentaje de los pedidos tiene al menos un producto recomprado?",
+    "palabras_clave": [
+      "porcentaje",
+      "%",
+      "pedidos",
+      "recomprado",
+      "al menos un",
+      "nivel pedido"
+    ],
+    "sql": "SELECT SUM(CASE WHEN recompradas >= 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pct_pedidos_con_recompra, SUM(CASE WHEN recompradas >= 1 THEN 1 ELSE 0 END) AS pedidos_con_recompra FROM (SELECT order_id, SUM(CASE WHEN reordered = 1 THEN 1 ELSE 0 END) AS recompradas FROM order_products GROUP BY order_id) t",
+    "patron": "Una condición sobre el pedido entero (todas / ninguna / al menos una línea) se decide en la subconsulta por order_id; afuera, el % de pedidos con SUM(CASE ...) * 100.0 / COUNT(*).",
+    "resumen_resultado": [
+      {
+        "pct_pedidos_con_recompra": 88.1319,
+        "pedidos_con_recompra": 2948968
+      }
+    ],
+    "tipo": "negativa",
+    "modelo_grande": "claude-opus-5-5",
+    "verificada": true,
+    "fecha": "2026-10-25"
+  }
+]

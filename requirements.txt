@@ -19,3 +19,6 @@ matplotlib==3.11.2
 
 # Extracción de texto de PDF para los tests de determinismo/honestidad (Fase 4)
 pypdf==6.19.0
+
+# Excel de la matriz de técnicas (Fase 30)
+openpyxl==3.1.5
