@@ -1,5 +1,5 @@
 {
-  "generado": "2026-10-25T20:12:45-06:00",
+  "generado": "2026-10-25T20:19:00-06:00",
   "parametros": {
     "modelos": [
       "llama3.1:8b",
@@ -1118,6 +1118,388 @@
         ],
         "ejemplos_intento_1": "ninguno",
         "timestamp": "2026-10-25T20:12:30-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          4.31,
+          4.92,
+          5.31
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:12:45-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          4.55,
+          6.02,
+          5.72
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:13:00-06:00"
+      }
+    ],
+    "N1|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.2
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:13:16-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.86
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:13:20-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.1
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:13:23-06:00"
+      }
+    ],
+    "N2|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.24
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:13:26-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          5.74,
+          5.2,
+          5.56
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:13:29-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.96
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:13:46-06:00"
+      }
+    ],
+    "N3|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          7.25
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:13:49-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.62
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:13:56-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.31
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:14:02-06:00"
+      }
+    ],
+    "N4|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.78
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:14:07-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.92
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:14:12-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.99
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:14:16-06:00"
+      }
+    ],
+    "N5|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.26
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:14:20-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.18
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:14:22-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.08
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:14:24-06:00"
+      }
+    ],
+    "N6|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.71
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:14:26-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.81
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:14:28-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.66
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:14:30-06:00"
+      }
+    ],
+    "N7|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.36
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:14:32-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.92
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:14:34-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.3
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:14:37-06:00"
+      }
+    ],
+    "N8|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.92
+        ],
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:14:40-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.76
+        ],
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:14:42-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.94
+        ],
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:14:44-06:00"
+      }
+    ],
+    "N9|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          3.61,
+          4.22,
+          3.69
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:14:46-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          18.1
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:14:58-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          13.1
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:18:19-06:00"
+      }
+    ],
+    "N10|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          5.68,
+          5.56,
+          5.45
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:18:32-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          6.65
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:18:48-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.42
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:18:55-06:00"
       }
     ]
   },
@@ -1471,13 +1853,135 @@
       ]
     },
     "N10|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
+      "repeticiones": 3,
       "termina_correcto": 0,
       "acierto_1er_intento": 0,
       "intento_medio_convergencia": null,
       "seg_medio_intento": 5.1,
       "secuencias": [
+        "✗✗✗",
+        "✗✗✗",
         "✗✗✗"
+      ]
+    },
+    "N1|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 3.1,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N2|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 4.5,
+      "secuencias": [
+        "✓",
+        "✗✗✗",
+        "✓"
+      ]
+    },
+    "N3|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 6.1,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N4|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 4.2,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N5|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 2.2,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N6|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 1.7,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N7|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 2.5,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N8|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 2.2,
+      "secuencias": [
+        "✓",
+        "✓",
+        "✓"
+      ]
+    },
+    "N9|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 8.5,
+      "secuencias": [
+        "✗✗✗",
+        "✓",
+        "✓"
+      ]
+    },
+    "N10|qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 5.6,
+      "secuencias": [
+        "✗✗✗",
+        "✓",
+        "✓"
       ]
     }
   },
@@ -1495,10 +1999,16 @@
       "seg_medio_intento": 5.4
     },
     "qwen2.5-coder:latest|base": {
-      "repeticiones": 28,
+      "repeticiones": 30,
       "termina_correcto": 23,
       "acierto_1er_intento": 21,
       "seg_medio_intento": 5.8
+    },
+    "qwen2.5-coder:latest|few_shot": {
+      "repeticiones": 30,
+      "termina_correcto": 27,
+      "acierto_1er_intento": 27,
+      "seg_medio_intento": 4.1
     }
   }
 }

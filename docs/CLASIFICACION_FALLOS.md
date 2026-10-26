@@ -1386,7 +1386,7 @@ N3/N4. Por eso N9 mide ya más «seguir la plantilla» que «descubrir el self-j
   - El costo es ~0.5-1 GB más de VRAM por el KV cache; cabe en la RTX 5060 de 8 GB con un solo modelo cargado.
   - No se cambió en silencio: lo decide el usuario.
 
-### 3. Matriz de técnicas (números reales)
+### 3. Matriz de técnicas, corrida reducida (descartada: la reemplaza la 3×3 de la sección 7)
 
 Por el presupuesto de pruebas cortas (10-15 min) se corrió **1 repetición × hasta 2 intentos** (no 3×3): 2 modelos
 × 2 técnicas × 10 necesidades = 40 cadenas en ~10 min.
@@ -1423,6 +1423,8 @@ Por el presupuesto de pruebas cortas (10-15 min) se corrió **1 repetición × h
 - **Todos los ejemplos inyectados** al intento 1 son de la familia correcta (top-1 = la hermana en las 10).
 
 ### 4. Validación fuera de muestra (8 preguntas libres, llama3.1:8b, temperatura 0.0, sin redacción)
+
+(Primera versión, con el falso positivo de X8; la corregida está en la sección 7.)
 
 | Pregunta | Base | Few shot | Ejemplos recibidos |
 |---|---|---|---|
@@ -1480,3 +1482,80 @@ Por el presupuesto de pruebas cortas (10-15 min) se corrió **1 repetición × h
   - al final: `2 failed, 629 passed, 2 xpassed in 173.80s`.
   - Son las mismas 2 fallas del entorno (`test_modelos_cargados_lee_api_ps`,
     `test_construir_ficha_coincide_con_dataset_instacart_md`).
+
+### 7. Fase 30b — num_ctx, matriz completa 3×3 y decisión de la técnica por defecto
+
+Esto es **medición, no ajuste**: no cambiaron los prompts, los ejemplos, la recuperación, el árbitro ni las 10
+necesidades. Los resultados reducidos de la sección 3 se descartaron, y la matriz se corrió desde cero.
+
+**num_ctx = 8192** (`client.NUM_CTX_DEFAULT`, override con `VENTIA_NUM_CTX`; `0` = default de Ollama):
+- Se aplica en las tres formas de llamar a Ollama: chat con timeout, chat sin timeout y streaming. Eso cubre la
+  generación de SQL, el juez, el revisor y la redacción, igual para base y few_shot. Lo verifica un test.
+- `ollama ps` con cada modelo cargado: llama3.1:8b ocupa 5.8 GB (antes 5.3 GB con 4096) y qwen2.5-coder:7b 5.0 GB,
+  los dos con **100% GPU** y CONTEXT 8192.
+- `nvidia-smi` (RTX 5060, 8,151 MiB): 7,183 MiB usados con llama y 6,397 MiB con qwen. Ninguno se fue a CPU.
+- **Latencia** (llama, base, N3 y N8, 3 repeticiones × 1 intento): 4.21 s por intento con 4096 → 4.67 s con
+  8192. El primer intento de cada serie incluye la carga del modelo (~8.3 s).
+  - En esa medición N8 falló 3/3 con 4096 y acertó 3/3 con 8192. Es **ruido de temperatura 0.5**, no efecto del
+    contexto: ese prompt mide ~3,300 tokens y nunca se truncaba.
+- **num_ctx solo cambia resultados donde antes había truncamiento.** El intento 1 de las necesidades no se
+  truncaba (sección 2), así que la diferencia base vs few_shot de abajo no se debe a num_ctx.
+
+**Validación fuera de muestra corregida:**
+- X8 exige la cifra además del nombre (`exigir_cifra`). Banana es también el producto más vendido, así que un SQL
+  sin `add_to_cart_order = 1` acertaba el nombre por casualidad. Es una corrección de la medición; no se tocaron la
+  recuperación ni los ejemplos.
+- Resultado: base 4/8, few_shot 4/8 (X2, X3, X4, X5 en las dos), **0 regresiones** y 0 mejoras. X8 queda
+  incorrecta en las dos, porque ninguna filtra el primer producto del carrito. Siguen recibiendo ejemplos 4 de 8.
+
+**Matriz 3×3** (2 modelos × 2 técnicas × 10 necesidades × 3 repeticiones × hasta 3 intentos; autocorrección con
+corte al primer acierto, árbitro chequeo, temperatura 0.5, num_ctx 8192):
+- 120 cadenas en ~75 min. La corrida se cortó una vez sin traceback (código 1) en qwen · few_shot · N9 · rep 3,
+  probablemente un fallo nativo durante una consulta pesada. Se continuó con `--reanudar` sobre esta misma
+  corrida: faltaban 4 cadenas.
+- Cada celda: «termina correcto x/3 · acierto al 1.er intento x/3 (secuencias)».
+
+| Nec. | llama · Base | llama · Few shot | qwen · Base | qwen · Few shot | RAG | Harness |
+|---|---|---|---|---|---|---|
+| N1 | 2/3 · 2/3 (✓ ✗✗✗ ✓) | 2/3 · 2/3 (✓ ✗✗✗ ✓) | 3/3 · 3/3 | 3/3 · 3/3 | pendiente | pendiente |
+| N2 | 2/3 · 1/3 (✓ ✗✗✗ ✗✗✓) | 3/3 · 2/3 (✓ ✓ ✗✗✓) | 2/3 · 1/3 (✗✗✗ ✗✓ ✓) | 2/3 · 2/3 (✓ ✗✗✗ ✓) | pendiente | pendiente |
+| N3 | 3/3 · 3/3 | 3/3 · 3/3 | 3/3 · 3/3 | 3/3 · 3/3 | pendiente | pendiente |
+| N4 | 3/3 · 3/3 | 3/3 · 3/3 | 2/3 · 2/3 (✗✗✗ ✓ ✓) | 3/3 · 3/3 | pendiente | pendiente |
+| N5 | 1/3 · 0/3 (✗✓ ✗✗✗ ✗✗✗) | **3/3 · 3/3** | 1/3 · 0/3 (✗✓ ✗✗✗ ✗✗✗) | **3/3 · 3/3** | pendiente | pendiente |
+| N6 | 3/3 · 0/3 (✗✓ ✗✓ ✗✓) | 3/3 · 2/3 (✓ ✓ ✗✓) | 3/3 · 3/3 | 3/3 · 3/3 | pendiente | pendiente |
+| N7 | 3/3 · 3/3 | 3/3 · 3/3 | 3/3 · 3/3 | 3/3 · 3/3 | pendiente | pendiente |
+| N8 | 2/3 · 2/3 (✗✗✗ ✓ ✓) | 3/3 · 3/3 | 3/3 · 3/3 | 3/3 · 3/3 | pendiente | pendiente |
+| N9 | 2/3 · 0/3 (✗✗✗ ✗✗✓ ✗✗✓) | 3/3 · 0/3 (✗✗✓ ✗✓ ✗✓) | 3/3 · 3/3 | 2/3 · 2/3 (✗✗✗ ✓ ✓) | pendiente | pendiente |
+| N10 | 0/3 · 0/3 (✗✗✗ ×3) | 1/3 · 0/3 (✗✗✓ ✗✗✗ ✗✗✗) | 0/3 · 0/3 (✗✗✗ ×3) | 2/3 · 2/3 (✗✗✗ ✓ ✓) | pendiente | pendiente |
+| **TOTAL** | **21/30 · 14/30** | **27/30 · 21/30** | **23/30 · 21/30** | **27/30 · 27/30** | pendiente | pendiente |
+
+**Latencia media por intento** (todos los intentos ejecutados, pipeline + juez):
+
+| Modelo | Base | Few shot | Cambio |
+|---|---|---|---|
+| llama3.1:8b | 5.85 s (58 intentos) | 6.52 s (45 intentos) | +11.5 % |
+| qwen2.5-coder:7b | 5.55 s (46 intentos) | 4.42 s (36 intentos) | −20 % |
+
+(El `seg_medio_intento` de los totales del JSON promedia las medias de cada celda: 5.2 / 5.4 y 5.8 / 4.1.)
+
+**Decisión de la técnica por defecto** (criterios fijados antes de ver los resultados):
+
+| Criterio | Resultado | ¿Se cumple? |
+|---|---|---|
+| (a) acierto al 1.er intento few_shot ≥ base en ambos modelos | llama 21/30 ≥ 14/30; qwen 27/30 ≥ 21/30 | ✅ |
+| (b) cero regresiones en las preguntas libres que base acertaba (comparador corregido) | 0 de 4 | ✅ |
+| (c) latencia por intento de few_shot no más de 20 % peor | llama +11.5 %; qwen −20 % | ✅ |
+
+**Se cumplen los tres. El default NO se cambió** (lo decide el usuario). El interruptor es una línea en
+`src/llm/tecnicas.py`: `TECNICA_DEFAULT = FEW_SHOT`, o sin tocar código, `VENTIA_TECNICA=few_shot`.
+
+**N10 con few_shot:** ya no falla en los dos modelos, pero sigue siendo la más difícil.
+- llama acierta 1 de 3 cadenas, y solo en el intento 3. En la repetición 3, su último intento tuvo un
+  `Parser Error` por anidar `COUNT(...)` dentro de un `CASE` en la consulta de afuera.
+- qwen acierta 2 de 3, en el intento 1, con la subconsulta por pedido del patrón de N10-neg-2.
+
+**Advertencias de siempre:**
+- La muestra es pequeña (3 repeticiones por celda).
+- A temperatura 0.5 las diferencias de ±1 por celda son ruido.
+- Las hermanas se diseñaron parecidas a las necesidades, así que la mejora sobre ellas está inflada respecto a
+  preguntas nuevas: fuera de muestra, few_shot no mejoró ninguna.

@@ -91,6 +91,27 @@ El SQL de cada ejemplo y el resumen real de su resultado están en el JSON. En e
 El valor por defecto **sigue siendo `base`** (`tecnicas.TECNICA_DEFAULT`) hasta que la matriz demuestre
 mejora. El interruptor es esa constante, o `VENTIA_TECNICA`.
 
+## Resultados (Fase 30b: matriz 3×3, num_ctx 8192)
+
+| Modelo | Técnica | Termina correcto | Acierto al 1.er intento | Latencia por intento |
+|---|---|---|---|---|
+| llama3.1:8b | base | 21/30 | 14/30 | 5.85 s |
+| llama3.1:8b | few_shot | 27/30 | 21/30 | 6.52 s (+11.5 %) |
+| qwen2.5-coder:7b | base | 23/30 | 21/30 | 5.55 s |
+| qwen2.5-coder:7b | few_shot | 27/30 | 27/30 | 4.42 s (−20 %) |
+
+- **Fuera de muestra** (8 preguntas libres, comparador corregido): base 4/8, few_shot 4/8, 0 regresiones y 0
+  mejoras.
+- **Criterios para cambiar el default** (fijados antes de ver los resultados): (a) acierto al 1.er intento ≥ base
+  en ambos modelos, (b) cero regresiones fuera de muestra y (c) latencia no más de 20 % peor. **Se cumplen los
+  tres; el default sigue en `base` hasta que el usuario lo cambie** (`TECNICA_DEFAULT = FEW_SHOT` en
+  `src/llm/tecnicas.py`, o `VENTIA_TECNICA=few_shot`).
+- **Contexto:** todas las llamadas a Ollama usan `num_ctx` 8192 (`VENTIA_NUM_CTX`); los dos modelos siguen al 100 %
+  en GPU. num_ctx solo cambia resultados donde antes había truncamiento.
+- **Advertencias:** muestra pequeña (3 repeticiones), ruido a temperatura 0.5, y la mejora en las 10 necesidades
+  está inflada porque las hermanas se diseñaron parecidas a ellas.
+- Detalle completo: `docs/CLASIFICACION_FALLOS.md`, Fase 30, sección 7.
+
 ## Pendiente (el profesor lo indicó para después)
 
 RAG y Harness están registradas en `src/llm/tecnicas.py` como **pendientes**. Se ven en la UI, pero
