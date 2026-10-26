@@ -309,13 +309,15 @@ def lecciones_de_corrida(corrida, bitacora: Bitacora, mapa: dict[str, list[str]]
     """Fase 31: lecciones de una corrida de botón (con referencia). Solo de
     intentos que el chequeo automático dio por INCORRECTOS y que fallaron al
     ejecutar en la BD: es la única evidencia objetiva y determinista."""
-    nuevas = []
+    nuevas, vistas = [], set()
     for it in corrida.iteraciones:
         if it.veredicto != "incorrecta" or not es_error_de_ejecucion(it.error) or not it.sql:
             continue
         leccion = leccion_de_error(it.error, it.sql, mapa, corrida.pregunta)
-        if leccion is not None:
-            nuevas.append(bitacora.agregar(leccion).leccion)
+        if leccion is None or leccion.firma in vistas:  # el mismo error en dos intentos: una sola vez
+            continue
+        vistas.add(leccion.firma)
+        nuevas.append(bitacora.agregar(leccion).leccion)
     return nuevas
 
 
