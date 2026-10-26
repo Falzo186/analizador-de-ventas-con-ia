@@ -307,3 +307,49 @@ def coincide_con_forma(d, filas_referencia: list[dict], filas: list | None) -> t
     return (m >= MIN_FILAS_LISTA_ABIERTA and comunes >= MIN_COINCIDENCIA_LISTA * m,
             f"{comunes}/{m} de las primeras filas del intento traen un identificador del top "
             f"{len(filas_referencia)} de la referencia")
+
+
+# ---------------------------------------------------------------------------
+# Fase 31: «por qué» del veredicto, para el USUARIO (nunca para el modelo)
+# ---------------------------------------------------------------------------
+
+#: Una línea con la regla de «parcial». Con el árbitro automático (Fase 25) el
+#: comparador es sí/no: no hay umbral de «parcial» que mostrar.
+REGLA_PARCIAL = ("Regla de «parcial»: el chequeo automático (árbitro desde la Fase 25) es sí/no, así que nunca "
+                 "da «parcial»; solo el árbitro juez-LLM puede darlo.")
+
+
+def _fmt(v: object) -> str:
+    if isinstance(v, float) and math.isfinite(v):
+        return f"{v:.4g}" if abs(v) < 1 else f"{v:,.4g}" if abs(v) < 1e4 else f"{v:,.0f}"
+    if isinstance(v, int) and not isinstance(v, bool):
+        return f"{v:,}"
+    return str(v)
+
+
+def explicacion_usuario(
+    necesidad: str, filas_referencia: list[dict], columnas: list[str] | None, filas: list | None,
+    coincide: bool | None, detalle: str | None,
+) -> str:
+    """Fase 31: por qué el intento coincide o no con la referencia, de forma
+    DETERMINISTA y con los valores (los de la referencia incluidos). Es para
+    la pantalla: NUNCA viaja al prompt (lo que viaja es `pista_modelo`, el
+    texto saneado de `iteraciones_juez.texto_retroalimentacion`)."""
+    d = nec.DEFINICIONES[necesidad]
+    if not filas_referencia:
+        return "No hay filas de referencia contra las que comparar."
+    ref0 = filas_referencia[0]
+    nombres = [c for c in (d.columna_nombre, *d.columnas_nombre_extra) if c]
+    valores = [d.columna_valor, *d.columnas_valor_extra]
+    esperado = " + ".join(_fmt(ref0[c]) for c in nombres) if nombres else ""
+    esperado = (esperado + " · " if esperado else "") + ", ".join(f"{c} = {_fmt(ref0[c])}" for c in valores)
+    if not filas:
+        obtenido = "sin resultado"
+    else:
+        obtenido = ", ".join(f"{c} = {_fmt(v)}" for c, v in list(zip(columnas or [], filas[0]))[:5])
+    n = len(filas or [])
+    pide = (f"la pregunta pide {d.filas_esperadas}" if d.filas_esperadas is not None
+            else "la pregunta no fija cuántas")
+    estado = "Coincide" if coincide else "No coincide"
+    return (f"{estado} con la referencia. Obtuvo (primera fila): {obtenido}; esperado: {esperado}. "
+            f"Forma: {n} fila(s) ({pide}; tipo «{d.tipo}»). Comparador: {detalle or '—'}.")

@@ -124,7 +124,8 @@ def test_alias_de_tablas():
 # ---------------------------------------------------------------------------
 
 def _leccion(i: int, texto: str | None = None) -> bc.Leccion:
-    return bc.Leccion(f"f{i}", texto or f"lección {i}", bc.ORIGEN_ERROR, f"p{i}", "SELECT 1", "err")
+    # Fase 31: textos distintos (e{i}q{i}); «lección 1» y «lección 2» ya cuentan como la misma (similitud).
+    return bc.Leccion(f"f{i}", texto or f"lección e{i}q{i}", bc.ORIGEN_ERROR, f"p{i}", "SELECT 1", "err")
 
 
 def test_persiste_entre_instancias_y_deduplica(tmp_path):
@@ -154,10 +155,11 @@ def test_limite_de_guardadas_descarta_la_menos_repetida_y_mas_vieja(tmp_path):
     assert "f1" not in firmas, "sale la de menos veces y más antigua"
 
 
-def test_prompt_lleva_como_maximo_8_lecciones_y_1900_caracteres(tmp_path):
+def test_prompt_lleva_como_maximo_3_lecciones_y_1900_caracteres(tmp_path):
+    # Fase 31: el máximo bajó de 8 a 3 (las más relevantes a la pregunta).
     b = bc.Bitacora(tmp_path / "b.json")
     for i in range(12):
-        b.agregar(_leccion(i, f"lección {i:02d} " + "x" * 150))
+        b.agregar(_leccion(i, f"lección e{i}q{i} " + "x" * 150))
     elegidas = b.para_prompt()
     assert len(elegidas) == bc.MAX_LECCIONES_PROMPT
     bloque = b.bloque_prompt()
@@ -194,11 +196,17 @@ def test_leccion_de_una_pregunta_llega_a_otra_distinta(db, monkeypatch):
     # Ambos intentos fallaron por lo mismo: una sola lección, sin duplicar en la misma pregunta.
     assert guardada.veces == 1
 
+    # Fase 31: llega a otra pregunta distinta si es RELEVANTE (comparte tema: pasillos/departamento)...
     doble = Doble([SQL_OTRA])
-    segunda = _preguntar(db, monkeypatch, doble, "¿Cuántos pedidos hay?", bitacora=bitacora, revisar_sql=True)
+    segunda = _preguntar(db, monkeypatch, doble, "¿Qué departamento tiene más pasillos?", bitacora=bitacora,
+                         revisar_sql=True)
     assert segunda.ok and segunda.lecciones_en_prompt == 1
     (sistema,) = doble.sistemas_sql
     assert bc.ENCABEZADO_PROMPT in sistema and guardada.leccion in sistema
+    # ...y no a una que no tiene nada que ver.
+    ajena = Doble([SQL_OTRA])
+    tercera = _preguntar(db, monkeypatch, ajena, "¿Cuántos pedidos hay?", bitacora=bitacora, revisar_sql=True)
+    assert tercera.lecciones_en_prompt == 0 and bc.ENCABEZADO_PROMPT not in ajena.sistemas_sql[0]
 
 
 def test_la_misma_leccion_repetida_suma_veces(db, monkeypatch):
@@ -240,8 +248,10 @@ def test_si_el_reintento_del_revisor_falla_se_conserva_el_original(db, monkeypat
                      "¿Pasillos por departamento?", bitacora=bitacora, revisar_sql=True)
     assert res.ok and res.sql.startswith(SQL_BUENO) and res.intentos == 1 and not res.reintento_por_revision
     assert "department_id" in res.revision_sql["reintento_error"]
+    # Fase 31: el resultado final es el original (el reintento no ejecutó): la alarma no cambió el resultado, así
+    # que no hay lección del revisor; sí la del error real de DuckDB del reintento.
     firmas = {x.firma for x in bitacora.cargar()}
-    assert firmas == {"revisor:lección rara", "columna_en_tabla:aisles.department_id"}
+    assert firmas == {"columna_en_tabla:aisles.department_id"}
 
 
 def test_el_revisor_no_reintenta_si_ya_se_uso_el_reintento(db, monkeypatch):
@@ -306,7 +316,7 @@ def test_app_la_segunda_pregunta_recibe_la_leccion_de_la_primera(app):
     leccion = meta["lecciones_nuevas"][0]
     assert any(c.value == f"📓 Lección agregada a la bitácora: {leccion}" for c in at.caption)
 
-    _preguntar_en_app(at, "¿Cuántos pedidos hay?")
+    _preguntar_en_app(at, "¿Qué departamento tiene más pasillos?")  # Fase 31: relevante a la lección
     assert leccion in modelo.sistemas_sql[-1] and leccion not in modelo.sistemas_sql[0]
     assert at.session_state["historial"][-1]["metadatos"]["lecciones_en_prompt"] == 1
     assert any(c.value == "📓 El prompt de esta pregunta llevaba 1 lección(es) de la bitácora." for c in at.caption)
@@ -314,11 +324,12 @@ def test_app_la_segunda_pregunta_recibe_la_leccion_de_la_primera(app):
 
 def test_app_carga_la_bitacora_guardada_al_iniciar(app):
     bc.Bitacora().agregar(bc.Leccion("columna_en_tabla:aisles.department_id", "La tabla aisles NO tiene la columna "
-                                     "department_id.", bc.ORIGEN_ERROR, "p", "s", "d"))
+                                     "department_id.", bc.ORIGEN_ERROR, "¿Qué departamento tiene más pasillos?",
+                                     "s", "d"))
     modelo = ModeloSimulado([SQL_OTRA], ["Hay 21 pedidos."])
     at = app(modelo)  # sesión nueva: la lección viene del disco
     assert any("📓 Bitácora: 1 lección(es) guardada(s)" in c.value for c in at.caption)
-    _preguntar_en_app(at, "¿Cuántos pedidos hay?")
+    _preguntar_en_app(at, "¿Cuántos pasillos tiene cada departamento?")  # Fase 31: relevante a la lección
     assert "La tabla aisles NO tiene la columna department_id." in modelo.sistemas_sql[0]
 
 

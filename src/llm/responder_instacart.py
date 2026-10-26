@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -114,10 +116,21 @@ class ResultadoInstacart:
     tecnica: str = "base"
     ejemplos_usados: list[tuple[str, float]] = field(default_factory=list)
     bloque_ejemplos: str | None = None
+    #: Fase 31 (instrumentación): segundos por fase de esta pregunta
+    #: (generacion_sql_s, ejecucion_sql_s, revisor_s, redaccion_s; se acumulan
+    #: si hubo reintento). No cambia nada de lo que va al modelo.
+    tiempos: dict[str, float] = field(default_factory=dict)
+    #: Fase 31: resultado del primer SQL cuando el revisor provocó un
+    #: reintento, para saber si el reintento cambió el RESULTADO.
+    columnas_antes_revision: list[str] | None = None
+    filas_antes_revision: list[tuple] | None = None
 
     @property
     def ok(self) -> bool:
         return self.error is None
+
+    def sumar_tiempo(self, fase: str, segundos: float) -> None:
+        self.tiempos[fase] = round(self.tiempos.get(fase, 0.0) + segundos, 2)
 
 
 def _tabla_a_texto(columnas: list[str], filas: list[tuple]) -> str:
@@ -228,6 +241,7 @@ def redaccion_en_stream(
     viene de `responder_pregunta_instacart(..., redactar=False)` con `res.ok`.
     """
     partes: list[str] = []
+    t = time.perf_counter()
     try:
         for fragmento in redactar_respuesta_stream(
             res.pregunta, res.columnas or [], res.filas or [], modelo=modelo, timeout_s=timeout_s,
@@ -238,11 +252,19 @@ def redaccion_en_stream(
     except client.LlmNoDisponible as exc:
         res.respuesta = None
         res.error = f"Se obtuvo el resultado pero no se pudo redactar la respuesta: {exc}"
+    finally:
+        res.sumar_tiempo("redaccion_s", time.perf_counter() - t)
 
 
-def _validar_y_ejecutar(con, sql: str, limite_filas: int, timeout_sql_s: float):
+def _validar_y_ejecutar(con, sql: str, limite_filas: int, timeout_sql_s: float,
+                       res: ResultadoInstacart | None = None):
     sql_seguro = validar_sql(sql)
-    columnas, filas = ejecutar_con_guardas(con, sql_seguro, limite_filas=limite_filas, timeout_s=timeout_sql_s)
+    t = time.perf_counter()
+    try:
+        columnas, filas = ejecutar_con_guardas(con, sql_seguro, limite_filas=limite_filas, timeout_s=timeout_sql_s)
+    finally:
+        if res is not None:
+            res.sumar_tiempo("ejecucion_sql_s", time.perf_counter() - t)
     return sql_seguro, columnas, filas
 
 
@@ -275,13 +297,17 @@ def generar_y_ejecutar_con_reintento(
       - la consulta excedió su timeout (`TimeoutConsulta`) o el modelo no
         respondió: reintentar solo duplicaría la espera.
     """
-    res.sql = generar_sql_instacart(
-        pregunta, descripcion_esquema, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
-        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones, ejemplos=ejemplos,
-    )
+    t = time.perf_counter()
+    try:
+        res.sql = generar_sql_instacart(
+            pregunta, descripcion_esquema, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
+            temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones, ejemplos=ejemplos,
+        )
+    finally:
+        res.sumar_tiempo("generacion_sql_s", time.perf_counter() - t)
     res.intentos = 1
     try:
-        res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s)
+        res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s, res)
         return
     except SqlNoSeguro as exc:
         if es_intento_de_escritura(res.sql):
@@ -295,12 +321,17 @@ def generar_y_ejecutar_con_reintento(
 
     res.motivo_reintento = motivo
     res.sql_rechazado = res.sql
-    res.sql = generar_sql_reintento_instacart(
-        pregunta, descripcion_esquema, res.sql, motivo, modelo=modelo, timeout_s=timeout_llm_s, contexto=contexto,
-        temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones, ejemplos=ejemplos,
-    )
+    t = time.perf_counter()
+    try:
+        res.sql = generar_sql_reintento_instacart(
+            pregunta, descripcion_esquema, res.sql, motivo, modelo=modelo, timeout_s=timeout_llm_s,
+            contexto=contexto, temperatura=temperatura, retroalimentacion=retroalimentacion, lecciones=lecciones,
+            ejemplos=ejemplos,
+        )
+    finally:
+        res.sumar_tiempo("generacion_sql_s", time.perf_counter() - t)
     res.intentos = 2
-    res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s)
+    res.sql, res.columnas, res.filas = _validar_y_ejecutar(con, res.sql, limite_filas, timeout_sql_s, res)
 
 
 def responder_pregunta_instacart(
@@ -362,8 +393,9 @@ def responder_pregunta_instacart(
         res.error = str(exc)
         return res
     res.ejemplos_usados, res.bloque_ejemplos = ctx.usados, ctx.bloque
-    lecciones = bitacora.bloque_prompt() if bitacora is not None else None
-    res.lecciones_en_prompt = len(bitacora.para_prompt()) if lecciones else 0
+    # Fase 31: como máximo 3 lecciones, las más relevantes a ESTA pregunta.
+    lecciones = bitacora.bloque_prompt(pregunta) if bitacora is not None else None
+    res.lecciones_en_prompt = len(bitacora.para_prompt(pregunta)) if lecciones else 0
 
     try:
         con = abrir_conexion_solo_lectura(str(db_path))
@@ -419,6 +451,7 @@ def responder_pregunta_instacart(
 
     # 4. resultado -> español (opcional; si falla, no invalida el resto)
     if redactar:
+        t_redaccion = time.perf_counter()
         try:
             texto = redactar_respuesta_instacart(
                 pregunta, res.columnas, res.filas, modelo=modelo, timeout_s=timeout_respuesta_llm_s,
@@ -430,6 +463,7 @@ def responder_pregunta_instacart(
         except Exception as exc:  # noqa: BLE001
             res.respuesta = None
             res.error = f"Se obtuvo el resultado pero no se pudo redactar la respuesta: {exc}"
+        res.sumar_tiempo("redaccion_s", time.perf_counter() - t_redaccion)
 
     return res
 
@@ -447,22 +481,30 @@ def _revisar_y_quizas_reintentar(
     reintento, lo usa; si el reintento no ejecuta, se queda el resultado
     original y el error del reintento se guarda para la bitácora."""
     modelo = modelo or client.modelo_actual_instacart()
-    rev = revisar_sql(
-        res.pregunta, res.sql or "", describir_columnas(con),
-        _tabla_a_texto(res.columnas or [], (res.filas or [])[:FILAS_AL_REVISOR]),
-        modelo=modelo, timeout_s=timeout_llm_s,
-    )
+    t = time.perf_counter()
+    try:
+        rev = revisar_sql(
+            res.pregunta, res.sql or "", describir_columnas(con),
+            _tabla_a_texto(res.columnas or [], (res.filas or [])[:FILAS_AL_REVISOR]),
+            modelo=modelo, timeout_s=timeout_llm_s,
+        )
+    finally:
+        res.sumar_tiempo("revisor_s", time.perf_counter() - t)
     res.revision_sql = asdict(rev)
     if not rev.sospechoso or res.intentos >= 2:
         return
     motivo = f"Un revisor marcó tu SQL como sospechoso: {rev.motivo}"
     sql_nuevo: str | None = None
     try:
-        sql_nuevo = generar_sql_reintento_instacart(
-            res.pregunta, descripcion_esquema, res.sql or "", motivo, modelo=modelo, timeout_s=timeout_llm_s,
-            contexto=contexto, lecciones=lecciones, ejemplos=ejemplos,
-        )
-        sql_nuevo, columnas, filas = _validar_y_ejecutar(con, sql_nuevo, limite_filas, timeout_sql_s)
+        t = time.perf_counter()
+        try:
+            sql_nuevo = generar_sql_reintento_instacart(
+                res.pregunta, descripcion_esquema, res.sql or "", motivo, modelo=modelo, timeout_s=timeout_llm_s,
+                contexto=contexto, lecciones=lecciones, ejemplos=ejemplos,
+            )
+        finally:
+            res.sumar_tiempo("generacion_sql_s", time.perf_counter() - t)
+        sql_nuevo, columnas, filas = _validar_y_ejecutar(con, sql_nuevo, limite_filas, timeout_sql_s, res)
     except (duckdb.Error, TimeoutConsulta) as exc:
         res.revision_sql["reintento_error"] = str(exc)
         res.revision_sql["reintento_sql"] = sql_nuevo
@@ -471,16 +513,30 @@ def _revisar_y_quizas_reintentar(
         res.revision_sql["reintento_error"] = str(exc)
         return
     res.sql_rechazado, res.motivo_reintento = res.sql, motivo
+    res.columnas_antes_revision, res.filas_antes_revision = res.columnas, res.filas
+    # Fase 31: ¿el reintento cambió el RESULTADO? Si no, la alarma no tuvo efecto.
+    res.revision_sql["resultado_cambio"] = not mismo_resultado(res.columnas, res.filas, columnas, filas)
     res.sql, res.columnas, res.filas = sql_nuevo, columnas, filas
     res.intentos, res.reintento_por_revision = 2, True
+
+
+def mismo_resultado(columnas_a, filas_a, columnas_b, filas_b) -> bool:
+    """Fase 31: mismo resultado = las mismas filas, aunque cambien los alias de
+    las columnas o el orden (sin ORDER BY, DuckDB no garantiza el orden). Es lo
+    que decide si una alarma del revisor tuvo efecto."""
+    return Counter(map(tuple, filas_a or [])) == Counter(map(tuple, filas_b or []))
 
 
 def _aprender(
     con: duckdb.DuckDBPyConnection, res: ResultadoInstacart, bitacora: Bitacora, error_ejecucion: str | None,
 ) -> None:
-    """Agrega a la bitácora las lecciones de esta pregunta: el error real del
-    primer SQL (si fue de ejecución), el error final y la revisión
-    sospechosa. Nunca tumba la respuesta: si algo falla, no se aprende."""
+    """Agrega a la bitácora las lecciones de esta pregunta, SOLO con evidencia
+    objetiva de fallo (Fase 31): el error real de DuckDB del primer SQL, del
+    final o del reintento del revisor; y la lección del revisor solo si su
+    reintento cambió el RESULTADO. Si el revisor marcó sospechoso pero el
+    resultado quedó idéntico (falsa alarma), no se guarda nada y se cuenta
+    como «alarma sin efecto». Nunca tumba la respuesta: si algo falla, no se
+    aprende."""
     try:
         mapa = mapa_columnas(con)
         candidatas = []
@@ -489,10 +545,14 @@ def _aprender(
         if error_ejecucion:
             candidatas.append(leccion_de_error(error_ejecucion, res.sql or "", mapa, res.pregunta))
         rev = res.revision_sql or {}
+        if rev.get("sospechoso") and res.reintento_por_revision:
+            bitacora.registrar_alarma(con_efecto=bool(rev.get("resultado_cambio")))
+            if rev.get("resultado_cambio"):
+                candidatas.append(leccion_de_revision(rev.get("motivo", ""), rev.get("leccion", ""),
+                                                      res.sql_rechazado or "", res.pregunta))
+            else:
+                rev["alarma_sin_efecto"] = True
         if rev.get("sospechoso"):
-            sql_revisado = res.sql_rechazado if res.reintento_por_revision else res.sql
-            candidatas.append(leccion_de_revision(rev.get("motivo", ""), rev.get("leccion", ""),
-                                                  sql_revisado or "", res.pregunta))
             if rev.get("reintento_error") and rev.get("reintento_sql"):
                 candidatas.append(leccion_de_error(rev["reintento_error"], rev["reintento_sql"], mapa, res.pregunta))
         vistas = set()

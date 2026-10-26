@@ -54,6 +54,12 @@ de la ruta Northwind (`src/ui/app.py`, `src.llm.responder`).
   panel de iteraciones y a la entrega. En el dashboard, «🧩 Necesidades
   negativas» lista el catálogo few-shot y «📐 Matriz de técnicas» muestra la
   tabla del profesor desde docs/resultados/matriz_tecnicas.json.
+- Fase 31: en la vista de chat, 10 botones de acceso rápido corren la pregunta
+  OFICIAL de cada necesidad con el motor de iteraciones (con referencia: se
+  califica contra data/referencia/Nx.json) y muestran la línea de tiempo por
+  intento (`src.ui.linea_tiempo`). Las preguntas escritas siguen por el chat
+  libre (revisor + bitácora), con la misma línea de tiempo en «Detalles».
+  Expander «📓 Bitácora de aprendizaje» con borrar por lección y limpiar.
 """
 
 from __future__ import annotations
@@ -79,7 +85,7 @@ from src.llm import iteraciones_juez as ij
 from src.llm import matriz_tecnicas
 from src.llm import responder_instacart as ri
 from src.llm import tecnicas
-from src.ui import dashboard, estilos
+from src.ui import dashboard, estilos, linea_tiempo
 
 #: Turnos previos (pregunta + SQL) que se mandan como contexto de
 #: seguimiento. El prompt de SQL ya ocupa ~1,742 tokens de los 4,096 con
@@ -127,6 +133,9 @@ CLAVE_MODELO_PEQUENO = "modelo_pequeno_sel"
 CLAVE_MODELO_GRANDE = "modelo_grande_sel"
 #: Fase 30: técnica de contexto (chat, iteraciones y entrega).
 CLAVE_TECNICA = "tecnica_sel"
+#: Fase 31: necesidad pedida con un botón de acceso rápido y aún sin correr.
+CLAVE_NECESIDAD_RAPIDA = "necesidad_rapida_pendiente"
+TIPO_CORRIDA = "corrida"
 #: Configuración (modelo + esfuerzo) congelada al ENVIAR la pregunta en curso.
 CLAVE_CONFIG_EN_CURSO = "config_en_curso"
 AVISO_OLLAMA_CAIDO = (
@@ -160,6 +169,8 @@ def inicializar_estado() -> None:
         st.session_state[CLAVE_MODO_ITERACION] = ij.MODO_DEFAULT
     if CLAVE_TECNICA not in st.session_state:
         st.session_state[CLAVE_TECNICA] = tecnicas.tecnica_por_defecto()
+    if CLAVE_NECESIDAD_RAPIDA not in st.session_state:
+        st.session_state[CLAVE_NECESIDAD_RAPIDA] = None
     if CLAVE_NECESIDAD in st.session_state:
         # Streamlit borra el estado de un widget con `key` en toda ejecución
         # en la que no se dibuja (aquí, la vista de chat). Reasignarlo lo
@@ -244,6 +255,14 @@ def mensaje_asistente(res: ri.ResultadoInstacart, contexto: list[tuple[str, str]
             "tecnica": res.tecnica,
             "ejemplos_usados": [list(u) for u in res.ejemplos_usados],
             "bloque_ejemplos": res.bloque_ejemplos,
+            # Fase 31: para la línea de tiempo del chat libre.
+            "sql_rechazado": res.sql_rechazado,
+            "motivo_reintento_es_ejecucion": res.motivo_reintento_es_ejecucion,
+            "tiempos": dict(res.tiempos),
+            "error": res.error,
+            "columnas_antes_revision": res.columnas_antes_revision,
+            "filas_antes_revision": None if res.filas_antes_revision is None else [
+                list(f) for f in res.filas_antes_revision[:MAX_FILAS_HISTORIAL]],
         },
     }
 
@@ -305,15 +324,13 @@ def render_detalles(mensaje: dict) -> None:
     (SQL · intentos · revisión y bitácora · datos), en vez de captions seguidas."""
     meta = mensaje["metadatos"]
     with st.expander("🔎 Detalles técnicos: SQL, intentos y datos", expanded=False):
-        st.markdown("**SQL ejecutado**")
-        if mensaje["sql"]:
-            st.code(mensaje["sql"], language="sql")
-        else:
-            st.caption("No se llegó a generar SQL.")
-        if meta.get("motivo_reintento"):
-            st.markdown("**Primer intento rechazado**")
-            st.caption("Reintento: el primer SQL se rechazó por:")
-            st.code(meta["motivo_reintento"], language="text")
+        # Fase 31: evaluación sin referencia y línea de tiempo por intento.
+        ev = linea_tiempo.evaluacion_chat({**meta, "contenido": mensaje["contenido"]})
+        st.markdown(f"**Evaluación:** {ev['icono']} {ev['etiqueta']}")
+        st.caption(linea_tiempo.AVISO_SIN_REFERENCIA)
+        st.markdown("**Línea de tiempo**")
+        for v in linea_tiempo.vistas_chat(mensaje):
+            linea_tiempo.render_intento(v)
         if meta.get("revision_sql") or meta.get("lecciones_en_prompt") or meta.get("lecciones_nuevas"):
             st.markdown("**Revisión y bitácora**")
         render_aprendizaje(meta)
@@ -346,6 +363,12 @@ def render_mensaje(mensaje: dict) -> None:
     if mensaje["rol"] == ROL_USUARIO:
         with st.chat_message("user"):
             st.markdown(mensaje["contenido"])
+            if mensaje["metadatos"].get("necesidad"):
+                st.caption(f"⚡ Necesidad {mensaje['metadatos']['necesidad']} · pregunta oficial (botón de acceso rápido)")
+        return
+    if mensaje.get("tipo") == TIPO_CORRIDA:
+        with st.chat_message("assistant"):
+            render_resultado_corrida(mensaje)
         return
     meta = mensaje["metadatos"]
     with st.chat_message("assistant"):
@@ -442,6 +465,140 @@ def responder_en_vivo(pregunta: str) -> None:
     st.session_state[CLAVE_CONFIG_EN_CURSO] = None
 
 
+def _al_pulsar_necesidad(nid: str) -> None:
+    # Callback: la configuración se congela al pulsar, como en el chat.
+    st.session_state[CLAVE_NECESIDAD_RAPIDA] = nid
+    st.session_state[CLAVE_CONFIG_EN_CURSO] = {**config_iteraciones(), "modelo": config_actual()["modelo"]}
+
+
+def _en_curso() -> bool:
+    return bool(st.session_state.get("pregunta_en_curso") or st.session_state.get(CLAVE_NECESIDAD_RAPIDA))
+
+
+def render_accesos_rapidos() -> None:
+    """Fase 31: un botón por necesidad; corre su pregunta OFICIAL con referencia."""
+    with st.container(border=True):
+        cfg = config_iteraciones()
+        st.markdown("**⚡ Las 10 necesidades**")
+        st.caption(f"Corre la pregunta oficial con referencia: {cfg['iteraciones']} intento(s) en modo "
+                   f"{ETIQUETAS_MODO[cfg['modo']].lower()} con `{config_actual()['modelo']}` y técnica "
+                   f"{tecnicas.TECNICAS[cfg['tecnica']].etiqueta} (⚙️ para cambiarlo). Cada intento se califica "
+                   "contra la respuesta de referencia.")
+        en_curso = _en_curso()
+        nids = list(dashboard.NECESIDADES_IDS)
+        for fila in (nids[:5], nids[5:]):
+            for col, nid in zip(st.columns(5), fila):
+                col.button(f"{nid} · {TITULOS_NECESIDADES[nid]}", key=f"rapido_{nid}", use_container_width=True,
+                           help=registro.definicion(nid).pregunta, disabled=en_curso,
+                           on_click=_al_pulsar_necesidad, args=(nid,))
+
+
+def render_resultado_corrida(mensaje: dict) -> None:
+    corrida = mensaje["corrida"]
+    st.markdown(f"**Línea de tiempo** · {corrida.necesidad} · técnica {corrida.tecnica} · modo "
+                f"{ETIQUETAS_MODO[corrida.modo].lower()}")
+    linea_tiempo.render_corrida(corrida)
+    for leccion in mensaje["metadatos"].get("lecciones_nuevas") or []:
+        st.caption(f"📓 Lección agregada a la bitácora: {leccion}")
+
+
+def responder_necesidad_en_vivo(nid: str) -> None:
+    """Corrida de botón: el motor de iteraciones de siempre (con referencia)."""
+    historial = st.session_state["historial"]
+    config = st.session_state.get(CLAVE_CONFIG_EN_CURSO) or {**config_iteraciones(), "modelo": config_actual()["modelo"]}
+    pregunta = registro.definicion(nid).pregunta  # texto OFICIAL, sin reescribir
+    usuario = {"rol": ROL_USUARIO, "contenido": pregunta, "sql": None, "metadatos": {"necesidad": nid}}
+    tarjeta = st.container(border=True)
+    with tarjeta.chat_message("user"):
+        st.markdown(pregunta)
+        st.caption(f"⚡ Necesidad {nid} · pregunta oficial (botón de acceso rápido)")
+    try:
+        client.modelos_disponibles()
+    except client.LlmNoDisponible:
+        with tarjeta.chat_message("assistant"):
+            st.error(AVISO_OLLAMA_CAIDO, icon="🔌")
+        historial += [usuario, {"rol": ROL_ASISTENTE, "contenido": AVISO_OLLAMA_CAIDO, "sql": None,
+                                "metadatos": {"pregunta": pregunta, "ok": False, "tipo_error": "error"}}]
+        return
+    with tarjeta.chat_message("assistant"):
+        corrida = None
+        with st.status(f"Corriendo {config['iteraciones']} intento(s) de {nid} con {config['modelo']}…",
+                       expanded=True) as estado:
+            vivo = st.empty()
+
+            def _avance(it: ij.Iteracion, hechas: int, total: int) -> None:
+                estado.update(label=f"{hechas} de {total} intento(s) terminados · último: {it.veredicto}")
+                with vivo.container():
+                    for terminado in corrida.iteraciones:
+                        linea_tiempo.render_intento(linea_tiempo.vista_iteracion(terminado, corrida.pregunta))
+
+            try:
+                corrida = ij.nueva_corrida(nid, modelos=[config["modelo"]], n=config["iteraciones"],
+                                           modo=config["modo"], tecnica=config["tecnica"])
+                ij.correr_iteraciones(nid, modelos=[config["modelo"]], corrida=corrida,
+                                      timeout_sql_llm_s=config["timeout_sql_s"],
+                                      timeout_respuesta_llm_s=config["timeout_respuesta_s"], al_avanzar=_avance)
+            except Exception as exc:  # noqa: BLE001 - p. ej. no se pudo cargar la referencia
+                estado.update(label="No se pudo correr la necesidad", state="error")
+                st.error(f"No se pudo correr {nid}: {exc}", icon="⚠️")
+                historial += [usuario, {"rol": ROL_ASISTENTE, "contenido": str(exc), "sql": None,
+                                        "metadatos": {"pregunta": pregunta, "ok": False, "tipo_error": "error"}}]
+                return
+            vivo.empty()
+            estado.update(label="Corrida terminada", state="complete", expanded=False)
+        nuevas = _lecciones_de_corrida(corrida)
+        mensaje = {"rol": ROL_ASISTENTE, "tipo": TIPO_CORRIDA, "contenido": ij.cierre_de(corrida, config["modelo"]).texto,
+                   "sql": None, "corrida": corrida, "metadatos": {"necesidad": nid, "lecciones_nuevas": nuevas}}
+        render_resultado_corrida(mensaje)
+    historial += [usuario, mensaje]
+
+
+def _lecciones_de_corrida(corrida: ij.CorridaIteraciones) -> list[str]:
+    """Fase 31: solo intentos incorrectos que fallaron al ejecutar en la BD."""
+    try:
+        con = ri.abrir_conexion_solo_lectura(str(ri.DB_PATH_DEFAULT))
+        try:
+            mapa = bitacora_chat.mapa_columnas(con)
+        finally:
+            con.close()
+        return bitacora_chat.lecciones_de_corrida(corrida, bitacora_chat.Bitacora(), mapa)
+    except Exception:  # noqa: BLE001 - la bitácora nunca tumba la corrida
+        return []
+
+
+def _borrar_leccion(firma: str) -> None:
+    bitacora_chat.Bitacora().borrar_leccion(firma)
+
+
+def _limpiar_bitacora() -> None:
+    bitacora_chat.Bitacora().borrar()
+    st.session_state["confirmar_limpiar_bitacora"] = False
+
+
+def render_bitacora_aprendizaje() -> None:
+    """Fase 31: la bitácora del chat, lección por lección."""
+    bitacora = bitacora_chat.Bitacora()
+    lecciones = bitacora_chat.por_prioridad(bitacora.cargar())
+    e = bitacora.estadisticas()
+    with st.expander(f"📓 Bitácora de aprendizaje ({len(lecciones)} lección(es))", expanded=False):
+        st.caption(f"Solo se guarda una lección con evidencia objetiva: un error real de DuckDB, o una alarma del "
+                   f"revisor cuyo reintento cambió el resultado. Al prompt van como máximo "
+                   f"{bitacora_chat.MAX_LECCIONES_PROMPT}, las más parecidas a la pregunta. Alarmas del revisor sin "
+                   f"efecto (mismo resultado): {e['alarmas_sin_efecto']} · con efecto: {e['alarmas_con_efecto']}.")
+        en_curso = _en_curso()
+        for i, x in enumerate(lecciones):
+            with st.container(border=True):
+                c_texto, c_boton = st.columns([12, 1])
+                c_texto.markdown(f"**{x.leccion}**")
+                c_texto.caption(f"{x.primera_vez[:10]} · ×{x.veces} · origen: {x.origen} · pregunta: {x.pregunta}")
+                c_boton.button("🗑️", key=f"borrar_leccion_{i}", help="Borrar esta lección", disabled=en_curso,
+                               on_click=_borrar_leccion, args=(x.firma,))
+        if lecciones:
+            confirmar = st.checkbox("Confirmo que quiero borrar TODAS las lecciones", key="confirmar_limpiar_bitacora")
+            st.button("🧹 Limpiar bitácora", key="limpiar_bitacora", disabled=not confirmar or en_curso,
+                      on_click=_limpiar_bitacora)
+
+
 def render_chat() -> None:
     st.title("💬 Pregúntale a la IA (Instacart)")
     st.caption(
@@ -449,6 +606,8 @@ def render_chat() -> None:
         "(⚙️ arriba para cambiarlo). Cada respuesta sale de una consulta SQL "
         "de solo lectura sobre los datos reales; el SQL queda visible en «Detalles»."
     )
+    render_accesos_rapidos()
+    render_bitacora_aprendizaje()
     # Fase 27 (UX): cada pregunta con su respuesta en una tarjeta propia.
     historial = st.session_state["historial"]
     for k in range(0, len(historial), 2):
@@ -463,6 +622,13 @@ def render_chat() -> None:
     if pregunta:
         responder_en_vivo(pregunta)
         st.session_state["pregunta_en_curso"] = None
+    nid = st.session_state.get(CLAVE_NECESIDAD_RAPIDA)
+    if nid:
+        try:
+            responder_necesidad_en_vivo(nid)
+        finally:
+            st.session_state[CLAVE_NECESIDAD_RAPIDA] = None
+            st.session_state[CLAVE_CONFIG_EN_CURSO] = None
 
 
 def _al_enviar_pregunta() -> None:

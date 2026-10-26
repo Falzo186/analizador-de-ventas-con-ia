@@ -44,11 +44,17 @@ from pathlib import Path
 
 import duckdb
 
+from src.llm.few_shot import similitudes
 from src.llm.retroalimentacion import PISTA_TIMEOUT
 
 RUTA_DEFAULT = Path("data/cache/bitacora_chat.json")
 MAX_LECCIONES_GUARDADAS = 20
-MAX_LECCIONES_PROMPT = 8
+#: Fase 31: como máximo 3, las más relevantes a la pregunta (antes: las 8 de
+#: más prioridad, fueran o no del tema).
+MAX_LECCIONES_PROMPT = 3
+#: Fase 31: similitud a partir de la cual una lección nueva se considera
+#: duplicada de una existente (misma similitud que `few_shot`).
+UMBRAL_DUPLICADA = 0.8
 MAX_CARACTERES_LECCION = 220
 MAX_CARACTERES_BLOQUE = 1900
 MAX_CARACTERES_DETALLE = 400
@@ -96,17 +102,37 @@ class Bitacora:
     def ruta(self) -> Path:
         return self._ruta if self._ruta is not None else RUTA_DEFAULT
 
+    def _datos(self) -> dict:
+        try:
+            datos = json.loads(self.ruta.read_text(encoding="utf-8"))
+            return datos if isinstance(datos, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
     def cargar(self) -> list[Leccion]:
         """Lecciones guardadas; un archivo ausente o corrupto es una bitácora vacía."""
         try:
-            datos = json.loads(self.ruta.read_text(encoding="utf-8"))
-            return [Leccion(**d) for d in datos.get("lecciones", [])]
-        except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+            return [Leccion(**d) for d in self._datos().get("lecciones", [])]
+        except (TypeError, AttributeError):
             return []
 
-    def _guardar(self, lecciones: list[Leccion]) -> None:
+    def estadisticas(self) -> dict[str, int]:
+        """Fase 31: alarmas del revisor con y sin efecto (el reintento cambió o
+        no el RESULTADO): mide qué tan confiable es el revisor."""
+        e = self._datos().get("estadisticas", {})
+        return {"alarmas_sin_efecto": int(e.get("alarmas_sin_efecto", 0)),
+                "alarmas_con_efecto": int(e.get("alarmas_con_efecto", 0))}
+
+    def registrar_alarma(self, *, con_efecto: bool) -> None:
+        e = self.estadisticas()
+        e["alarmas_con_efecto" if con_efecto else "alarmas_sin_efecto"] += 1
+        self._guardar(self.cargar(), e)
+
+    def _guardar(self, lecciones: list[Leccion], estadisticas: dict | None = None) -> None:
         self.ruta.parent.mkdir(parents=True, exist_ok=True)
-        contenido = json.dumps({"lecciones": [asdict(x) for x in lecciones]}, indent=2, ensure_ascii=False)
+        estadisticas = estadisticas if estadisticas is not None else self.estadisticas()
+        contenido = json.dumps({"lecciones": [asdict(x) for x in lecciones], "estadisticas": estadisticas},
+                               indent=2, ensure_ascii=False)
         fd, tmp = tempfile.mkstemp(dir=self.ruta.parent, prefix=".bitacora_", suffix=".json")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(contenido)
@@ -121,6 +147,12 @@ class Bitacora:
         nueva.leccion = _recortar(nueva.leccion, MAX_CARACTERES_LECCION)
         nueva.detalle = _recortar(nueva.detalle, MAX_CARACTERES_DETALLE)
         existente = next((x for x in lecciones if x.firma == nueva.firma), None)
+        if existente is None and lecciones:
+            # Fase 31: también es la misma lección si el texto es casi igual.
+            sims = similitudes(nueva.leccion, [x.leccion for x in lecciones])
+            k = max(range(len(sims)), key=sims.__getitem__)
+            if sims[k] >= UMBRAL_DUPLICADA:
+                existente = lecciones[k]
         if existente is not None:
             existente.veces += 1
             existente.ultima_vez = ahora
@@ -136,10 +168,16 @@ class Bitacora:
         self._guardar(lecciones)
         return guardada
 
-    def para_prompt(self) -> list[Leccion]:
-        """Las que entran al prompt: más `veces` primero, a igualdad las más
-        recientes; como máximo `MAX_LECCIONES_PROMPT` y `MAX_CARACTERES_BLOQUE`."""
+    def para_prompt(self, pregunta: str | None = None) -> list[Leccion]:
+        """Las que entran al prompt, como máximo `MAX_LECCIONES_PROMPT` y
+        `MAX_CARACTERES_BLOQUE`. Fase 31: con `pregunta`, solo las relevantes
+        (similitud > 0 con la lección y la pregunta que la originó), de más a
+        menos parecidas; a igualdad, más `veces` y más recientes. Sin
+        `pregunta`, por prioridad (como antes)."""
         orden = por_prioridad(self.cargar())
+        if pregunta is not None:
+            sims = similitudes(pregunta, [f"{x.leccion} {x.pregunta}" for x in orden])
+            orden = [x for x, sim in sorted(zip(orden, sims), key=lambda par: -par[1]) if sim > 0]
         elegidas, usados = [], len(ENCABEZADO_PROMPT)
         for x in orden[:MAX_LECCIONES_PROMPT]:
             if usados + len(x.leccion) + 3 > MAX_CARACTERES_BLOQUE:
@@ -148,15 +186,22 @@ class Bitacora:
             usados += len(x.leccion) + 3
         return elegidas
 
-    def bloque_prompt(self) -> str | None:
+    def bloque_prompt(self, pregunta: str | None = None) -> str | None:
         """Texto para el prompt de sistema, o None si no hay lecciones."""
-        elegidas = self.para_prompt()
+        elegidas = self.para_prompt(pregunta)
         if not elegidas:
             return None
         return "\n".join([ENCABEZADO_PROMPT, *(f"- {x.leccion}" for x in elegidas)])
 
     def borrar(self) -> None:
         self._guardar([])
+
+    def borrar_leccion(self, firma: str) -> bool:
+        """Fase 31: borra UNA lección (por su firma). True si existía."""
+        lecciones = self.cargar()
+        quedan = [x for x in lecciones if x.firma != firma]
+        self._guardar(quedan)
+        return len(quedan) < len(lecciones)
 
 
 def por_prioridad(lecciones: list[Leccion]) -> list[Leccion]:
@@ -250,6 +295,28 @@ def leccion_de_error(
     primera = _recortar(error.splitlines()[0], 160)
     firma = "otro:" + re.sub(r'"[^"]*"|\d+', "_", primera.lower())[:60]
     return Leccion(firma, f"Un SQL anterior falló con: {primera}", ORIGEN_ERROR, pregunta, sql, error)
+
+
+def es_error_de_ejecucion(error: str | None) -> bool:
+    """Fase 31: el error es evidencia objetiva de fallo en la BD (DuckDB o el
+    timeout de la guarda), no del modelo (no respondió) ni de la guarda de
+    seguridad (pidió escribir)."""
+    e = error or ""
+    return "No se pudo ejecutar la consulta contra los datos" in e or "excedió el límite" in e
+
+
+def lecciones_de_corrida(corrida, bitacora: Bitacora, mapa: dict[str, list[str]]) -> list[str]:
+    """Fase 31: lecciones de una corrida de botón (con referencia). Solo de
+    intentos que el chequeo automático dio por INCORRECTOS y que fallaron al
+    ejecutar en la BD: es la única evidencia objetiva y determinista."""
+    nuevas = []
+    for it in corrida.iteraciones:
+        if it.veredicto != "incorrecta" or not es_error_de_ejecucion(it.error) or not it.sql:
+            continue
+        leccion = leccion_de_error(it.error, it.sql, mapa, corrida.pregunta)
+        if leccion is not None:
+            nuevas.append(bitacora.agregar(leccion).leccion)
+    return nuevas
 
 
 def leccion_de_revision(motivo: str, leccion: str, sql: str, pregunta: str) -> Leccion:

@@ -430,6 +430,14 @@ class Iteracion:
     tecnica: str = tecnicas.BASE
     ejemplos_usados: list = field(default_factory=list)
     bloque_ejemplos: str | None = None
+    #: Fase 31 (solo exponen datos): segundos por fase del pipeline
+    #: (`ResultadoInstacart.tiempos`); el «por qué» del veredicto PARA EL
+    #: USUARIO (`rf.explicacion_usuario`, puede citar la referencia y nunca va
+    #: al prompt); y `pista_modelo`, el texto EXACTO que recibió el intento
+    #: siguiente (`texto_retroalimentacion`, saneado). None si no hubo siguiente.
+    tiempos: dict = field(default_factory=dict)
+    explicacion_usuario: str | None = None
+    pista_modelo: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -653,6 +661,42 @@ class CorridaIteraciones:
         }
 
 
+@dataclass
+class Cierre:
+    """Fase 31: cómo terminó la cadena de un modelo."""
+    aceptada_en: int | None
+    texto: str
+    explicacion: str
+    corte: bool
+    tiempo_modelo_s: float
+    tiempo_juez_s: float
+
+
+def cierre_de(corrida: CorridaIteraciones, modelo: str) -> Cierre:
+    """«Aceptada en el intento k» o «rechazada tras N intentos», con el por qué
+    (de `explicacion_usuario`), la evolución, si se cortó y los totales."""
+    its = corrida.de_modelo(modelo)
+    tiempo_modelo = round(sum(it.duracion_pipeline_s for it in its), 1)
+    tiempo_juez = round(sum(it.duracion_juez_total_s for it in its), 1)
+    secuencia = " → ".join(f"{it.numero}:{it.veredicto}" for it in its) or "sin intentos"
+    aceptada = next((it for it in its if it.veredicto == CORRECTA), None)
+    corte = bool(corrida.no_ejecutadas(modelo))
+    if aceptada is not None:
+        texto = f"Resultado final: aceptada en el intento {aceptada.numero}"
+        explicacion = aceptada.explicacion_usuario or aceptada.justificacion
+        if corte:
+            texto += (f" (se cortó la iteración: los intentos {aceptada.numero + 1}-{corrida.n_iteraciones} no se "
+                      "ejecutaron)")
+    else:
+        texto = f"Resultado final: rechazada tras {len(its)} intento(s)"
+        # El «mejor» intento: el último que llegó a ejecutar; si ninguno, el último.
+        mejor = next((it for it in reversed(its) if it.ok), its[-1] if its else None)
+        motivo = "" if mejor is None else (mejor.explicacion_usuario or mejor.justificacion or mejor.error or "")
+        explicacion = (f"Mejor intento: el {mejor.numero} — {motivo}" if mejor else "No hubo intentos.")
+    explicacion += f" Evolución: {secuencia}."
+    return Cierre(aceptada.numero if aceptada else None, texto, explicacion, corte, tiempo_modelo, tiempo_juez)
+
+
 def texto_no_ejecutada(convergio_en: int) -> str:
     return f"no ejecutada (ya convergió en el intento {convergio_en})"
 
@@ -836,7 +880,9 @@ def correr_iteracion(
             necesidad, res.columnas, res.filas, None if res.filas is None else len(res.filas)),
         coincide_referencia=coincide, detalle_coincidencia=detalle,
         tecnica=res.tecnica, ejemplos_usados=[list(u) for u in res.ejemplos_usados],
-        bloque_ejemplos=res.bloque_ejemplos,
+        bloque_ejemplos=res.bloque_ejemplos, tiempos=dict(res.tiempos),
+        explicacion_usuario=(rf.explicacion_usuario(necesidad, referencia_filas, res.columnas, res.filas, coincide,
+                                                    detalle) if referencia_filas else None),
     )
 
 
@@ -922,6 +968,8 @@ def correr_iteraciones(
                 al_iniciar(modelo, i, len(corrida.iteraciones) + corrida.total_no_ejecutadas, total)
             retro = (texto_retroalimentacion(anterior, vp)
                      if corrida.modo == MODO_AUTOCORRECCION and anterior is not None else None)
+            if retro is not None:
+                anterior.pista_modelo = retro  # Fase 31: lo que viaja, tal cual
             it = correr_iteracion(
                 corrida.necesidad, corrida.referencia, modelo, i, total=corrida.n_iteraciones,
                 retroalimentacion=retro,

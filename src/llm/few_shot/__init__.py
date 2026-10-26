@@ -208,3 +208,21 @@ def contexto_few_shot(pregunta: str, *, k: int | None = None) -> ContextoFewShot
         bloque=formatear_bloque(recuperados),
         usados=[(e.id, round(s, 3)) for e, s in recuperados],
     )
+
+
+def similitudes(consulta: str, textos: list[str]) -> list[float]:
+    """Fase 31: la MISMA similitud (TF-IDF coseno, TF binario, `normalizar`)
+    de `consulta` contra textos arbitrarios, con el IDF calculado sobre
+    `textos` y la consulta (así, una palabra de la consulta que no está en un
+    texto baja la similitud). La usa la bitácora del chat para elegir las
+    lecciones relevantes y detectar duplicadas. No cambia la recuperación de
+    ejemplos."""
+    if not textos:
+        return []
+    docs = [Counter(set(normalizar(t))) for t in textos]
+    n = len(docs) + 1
+    df = Counter(t for d in [*docs, Counter(set(normalizar(consulta)))] for t in d)
+    idf = {t: math.log((1 + n) / (1 + c)) + 1.0 for t, c in df.items()}
+    q = _vector(Counter(set(normalizar(consulta))), idf)
+    return [round(sum(peso * v.get(t, 0.0) for t, peso in q.items()), 4) if q else 0.0
+            for v in (_vector(d, idf) for d in docs)]

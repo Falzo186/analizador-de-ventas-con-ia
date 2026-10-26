@@ -157,7 +157,9 @@ def test_pregunta_de_escritura_se_muestra_como_rechazo_claro(app):
     assert len(errores) == 1
     assert "Consulta rechazada por las guardas de seguridad" in errores[0]
     assert "Traceback" not in errores[0]
-    assert [c.value for c in at.code] == ["DELETE FROM orders"]
+    # Fase 31: la línea de tiempo muestra el SQL y, aparte, el error exacto.
+    assert [c.value for c in at.code] == ["DELETE FROM orders",
+                                          "No puedo ejecutar esa consulta: La consulta debe empezar con SELECT."]
     assert at.session_state["historial"][-1]["metadatos"]["tipo_error"] == "rechazo"
 
 
