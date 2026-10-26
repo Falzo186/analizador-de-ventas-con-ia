@@ -341,8 +341,8 @@ def explicacion_usuario(
     ref0 = filas_referencia[0]
     nombres = [c for c in (d.columna_nombre, *d.columnas_nombre_extra) if c]
     valores = [d.columna_valor, *d.columnas_valor_extra]
-    esperado = " + ".join(_fmt(ref0[c]) for c in nombres) if nombres else ""
-    esperado = (esperado + " · " if esperado else "") + ", ".join(f"{c} = {_fmt(ref0[c])}" for c in valores)
+    esperado = " + ".join(_fmt(ref0.get(c, "?")) for c in nombres) if nombres else ""
+    esperado = (esperado + " · " if esperado else "") + ", ".join(f"{c} = {_fmt(ref0.get(c, '?'))}" for c in valores)
     if not filas:
         obtenido = "sin resultado"
     else:
