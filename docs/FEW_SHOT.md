@@ -112,6 +112,17 @@ mejora. El interruptor es esa constante, o `VENTIA_TECNICA`.
   está inflada porque las hermanas se diseñaron parecidas a ellas.
 - Detalle completo: `docs/CLASIFICACION_FALLOS.md`, Fase 30, sección 7.
 
+## Botones de acceso rápido y línea de tiempo (Fase 31)
+
+En la vista de chat, «⚡ Las 10 necesidades» corre la pregunta oficial de cada necesidad con la técnica elegida en
+⚙️ (base o few_shot), con referencia. Cada intento muestra en su línea de tiempo «Técnica: … — ejemplos usados»,
+la pista exacta que recibió, el veredicto con su «por qué» y la pista que viaja al siguiente intento.
+
+- El «por qué» (`explicacion_usuario`) puede citar la referencia y es solo para la pantalla.
+- Al modelo solo le llega `pista_modelo`, saneada.
+- Las preguntas escritas a mano no tienen referencia: se evalúan como «SQL sano / sospechoso / error», nunca como
+  «correcta».
+
 ## Pendiente (el profesor lo indicó para después)
 
 RAG y Harness están registradas en `src/llm/tecnicas.py` como **pendientes**. Se ven en la UI, pero

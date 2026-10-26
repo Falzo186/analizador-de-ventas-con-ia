@@ -111,6 +111,7 @@ configuración:
 | `OLLAMA_HOST` | `http://localhost:11434` | La lee la librería `ollama`: dónde está el servidor. |
 | `VENTIA_TECNICA` | `base` | Fase 30: técnica de contexto del prompt de SQL (`base` o `few_shot`; `rag` y `harness` están pendientes). Ver [`docs/FEW_SHOT.md`](docs/FEW_SHOT.md). |
 | `VENTIA_FEWSHOT_K` | `2` | Fase 30: cuántos ejemplos resueltos inyecta la técnica `few_shot` como máximo. |
+| `VENTIA_NUM_CTX` | `8192` | Fase 30b: ventana de contexto de todas las llamadas a Ollama; `0` = default de Ollama. |
 
 Las variables de la etapa Northwind (`VENTIA_DB_PATH`, `VENTIA_LLM_MODELO`)
 **se eliminaron del código** en la Fase 7. Ya no tienen ningún efecto.
@@ -263,6 +264,8 @@ documento enlazado.
 | 24 | Las 11 necesidades se reemplazan por 10 de una sola consulta; retroalimentación entre intentos sin fuga de la respuesta; pruebas con 8B/7B | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md), «Fase 24» |
 | 25-29 | Árbitro automático, corte al primer acierto, bitácora del chat, 5 necesidades nuevas, límite propio de N9 | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) |
 | 30 | Técnica few-shot con «necesidades negativas» (14 ejemplos verificados), registro de técnicas (RAG/Harness pendientes), matriz de técnicas y tabla por intento | ver `git log` | [`FEW_SHOT.md`](docs/FEW_SHOT.md), [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) «Fase 30» |
+| 30b | num_ctx 8192, matriz de técnicas 3×3 y criterios para el default (few_shot los cumple; el default sigue en base) | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) «Fase 30», sección 7 |
+| 31 | Botones de las 10 necesidades en el chat, línea de tiempo por intento con veredicto y «por qué», bitácora sana (solo evidencia objetiva, máx. 3 lecciones relevantes) | ver `git log` | [`CLASIFICACION_FALLOS.md`](docs/CLASIFICACION_FALLOS.md) «Fase 31» |
 
 El código de la etapa anterior (chat sobre Northwind, simulador de ventas
 sintéticas y evaluador del banco de Northwind) está archivado en

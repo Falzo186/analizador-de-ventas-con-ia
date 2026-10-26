@@ -1559,3 +1559,158 @@ corte al primer acierto, árbitro chequeo, temperatura 0.5, num_ctx 8192):
 - A temperatura 0.5 las diferencias de ±1 por celda son ruido.
 - Las hermanas se diseñaron parecidas a las necesidades, así que la mejora sobre ellas está inflada respecto a
   preguntas nuevas: fuera de muestra, few_shot no mejoró ninguna.
+
+## Fase 31 — Accesos rápidos a las 10 necesidades, línea de tiempo por intento y bitácora sana
+
+Es instrumentación y UI. **Lo que se le manda al modelo no cambió:** prompts, ejemplos few-shot, recuperación,
+árbitro (Fase 25), corte (Fase 26) y las 10 necesidades. Lo verifica un test contra un golden generado con el
+código del commit `977818a`: para las 10 necesidades × {base, few_shot}, el prompt es idéntico byte por byte.
+La única excepción, pedida explícitamente, es la selección de lecciones de la bitácora del chat (Paso 4).
+
+### 1. Botones de acceso rápido
+
+- En la vista de chat, el bloque «⚡ Las 10 necesidades» tiene 10 botones `N1 · <título>`, con la pregunta oficial
+  como ayuda. La barra lateral sigue igual: abre el dashboard en esa necesidad.
+- Al hacer clic, se toma el texto OFICIAL (`registro.definicion(nid).pregunta`), se muestra como mensaje del
+  usuario y se corre con el **motor de iteraciones de siempre** (`nueva_corrida` + `correr_iteraciones`, incluso
+  con N = 1), con la referencia de `data/referencia/Nx.json`.
+  - Configuración actual: modelo del chat, técnica, número de iteraciones y modo de ⚙️, congelados al pulsar.
+- Patrón «pendiente + rerun» (`necesidad_rapida_pendiente`). Los botones se deshabilitan mientras hay una
+  corrida o una pregunta en curso. Con Ollama caído, aparece un mensaje claro y la app no se rompe.
+- Las preguntas escritas a mano siguen por el chat libre (revisor de SQL + bitácora).
+
+### 2. Línea de tiempo por intento (`src/ui/linea_tiempo.py`)
+
+Cada intento es un contenedor con borde que muestra:
+- (a) encabezado «Intento k de N · modelo · técnica», tiempo del intento, tiempo del juez o revisor, y tiempos
+  por fase (generación de SQL / ejecución / revisor / redacción);
+- (b) la pregunta enviada y la pista recibida (el texto exacto que viajó al prompt);
+- (c) el SQL;
+- (d) el resultado crudo o el error exacto;
+- (e) la respuesta;
+- (f) la evaluación con su «por qué»;
+- (g) la opinión del juez o revisor, rotulada «diagnóstico (no decide el veredicto)», con aviso si no coincide con
+  el chequeo automático;
+- (h) la pista para el siguiente intento, o «sin pista: ya converge».
+
+En los botones va expandida, con un cierre: «aceptada en el intento k» o «rechazada tras N», con el por qué, la
+evolución, si se cortó y el tiempo total del modelo y del juez. En el chat libre va dentro de «Detalles
+técnicos», con el mismo formato.
+
+Instrumentación (solo expone datos):
+- `ResultadoInstacart.tiempos` (segundos por fase);
+- `Iteracion.tiempos`, `explicacion_usuario` y `pista_modelo`;
+- `iteraciones_juez.cierre_de`.
+
+### 3. Veredicto y «por qué»
+
+- **Con referencia (botones):** ✅ Correcta / 🟡 Parcialmente correcta / ❌ Incorrecta, tal cual el veredicto del
+  árbitro.
+  - Con el chequeo automático (Fase 25) el comparador es sí/no, así que nunca da «parcial»; la caption lo dice.
+  - El «por qué» lo arma `retroalimentacion.explicacion_usuario` de forma determinista: primera fila obtenida
+    frente a la esperada, forma (n.º de filas frente a lo que pide la pregunta) y el detalle del comparador.
+  - **Dos campos separados:** `explicacion_usuario`, que puede citar la referencia y es solo para la pantalla, y
+    `pista_modelo`, el texto saneado de `texto_retroalimentacion`, que es lo único que viaja al siguiente
+    intento.
+  - Un test verifica que lo que recibe el intento k + 1 es exactamente `pista_modelo` del intento k, que
+    `pista_modelo` no tiene fugas (enfoque de la Fase 24) y que `explicacion_usuario` sí cita la referencia
+    pero no entra al prompt.
+- **Sin referencia (chat libre):** ✅ SQL sano / ⚠️ SQL sospechoso / ❌ Error de ejecución (🛡️ si la guarda lo
+  rechazó), con el motivo del revisor. Nunca dice «correcta». La caption aclara: «Sin respuesta de referencia:
+  solo se evalúa si el SQL es sano, no si la respuesta es la correcta».
+
+### 4. Bitácora sana
+
+- **Solo se guarda una lección con evidencia objetiva:**
+  - un error de DuckDB (o el timeout de la guarda) en ese intento;
+  - o una alarma del revisor cuyo reintento **cambió el resultado**. Mismo resultado = las mismas filas, sin
+    importar el orden ni los alias.
+  - Si el revisor marcó sospechoso y el resultado quedó idéntico, no se guarda nada y se cuenta como **alarma sin
+    efecto** (`Bitacora.estadisticas()`, visible en la UI).
+  - En corridas de botón, solo de intentos que el chequeo dio por incorrectos y que fallaron al ejecutar en la BD.
+- **Duplicados por similitud:** misma similitud TF-IDF de `few_shot` (`few_shot.similitudes`), umbral 0.8.
+- **Al prompt van como máximo 3 lecciones,** las más parecidas a la pregunta (similitud > 0). Antes iban 8, las de
+  más prioridad, aunque no tuvieran que ver.
+  - Medido con la bitácora real (15 lecciones): el bloque pasa de 1,335 caracteres (8 lecciones, ~392 tokens) a
+    515 de media (3 lecciones, ~151 tokens), un **−61 %**.
+  - «¿Cuál es la capital de Francia?» no recibe ninguna lección.
+- **UI:** el expander «📓 Bitácora de aprendizaje» lista cada lección (fecha, veces, origen, pregunta), tiene
+  🗑️ por lección y «🧹 Limpiar bitácora» con una casilla de confirmación.
+- **No se borró ninguna lección existente.** La revisión de las 15 está en el reporte de la fase (sección 6).
+
+### 5. Pruebas
+
+- `tests/test_fase31_linea_tiempo.py` (16 tests, AppTest y modelos falsos, sin Ollama):
+  - los 10 botones con la pregunta oficial y su `necesidad_id`; Ollama caído;
+  - todos los campos de la línea de tiempo con tiempos y pista; correcta / parcial / incorrecta;
+  - cierre rechazado con evolución; el chat libre nunca dice «correcta»;
+  - solo `pista_modelo` llega al prompt;
+  - alarma sin efecto → no hay lección; error de DuckDB → sí; corrida de botón;
+  - máximo 3 y duplicados; borrar y limpiar en la UI; golden del prompt por técnica.
+- Pruebas existentes ajustadas a las reglas nuevas:
+  - `test_fase27_bitacora`: textos de prueba distintos (los iguales ahora son duplicados), máximo 3, la lección
+    llega solo a preguntas relevantes, y sin lección del revisor si su reintento no cambió el resultado.
+  - `test_app_instacart`: la línea de tiempo muestra también el error exacto.
+
+### 6. Lecciones actuales de la bitácora (revisión; no se borró ninguna)
+
+Hay 17 lecciones en `data/cache/bitacora_chat.json`. Las 16 y 17 las agregaron las corridas de N2 de las
+capturas (errores reales de DuckDB). Las marcadas ⚠️ parecen incorrectas, contradictorias o inútiles:
+
+| # | Origen | Lección (resumida) | Revisión |
+|---|---|---|---|
+| 1 | error | aisles no tiene department_id; está en departments, products | ✅ correcta |
+| 2 | error | la columna name no está en duckdb_tables | ⚠️ inútil: vino de preguntar por tablas del sistema |
+| 3 | revisor | agrupar por aisle_id, contar productos distintos… (truncada) | ⚠️ específica de una pregunta y truncada |
+| 4 | error | product_id no está en aisles: agrega el JOIN | ✅ correcta |
+| 5 | error | no anides AVG(COUNT(*)): subconsulta y promedio afuera | ✅ correcta (es el patrón de N5) |
+| 6 | revisor | «asegúrate de filtrar los datos para una respuesta precisa» | ⚠️ vaga; empuja a inventar filtros (como el `HAVING` que inventó llama en N1) |
+| 7 | revisor | para un porcentaje divide entre el total y multiplica por 100 | ⚠️ dudosa: choca con la tasa como fracción de N2-N4 |
+| 8 | error | toda columna no agregada va en el GROUP BY | ✅ correcta |
+| 9 | revisor | «columnas relevantes para agrupar y ordenar» | ⚠️ vaga; salió de una falsa alarma (el SQL marcado era correcto) |
+| 10 | revisor | sobre pares de productos con HAVING >= 2… (truncada) | ⚠️ truncada; específica |
+| 11 | error | alias p2 sin declarar su tabla | ✅ correcta |
+| 12 | revisor | «busca información relevante para tu pregunta…» (truncada) | ⚠️ vaga y truncada |
+| 13 | revisor | «aplica el filtro a todas las columnas relevantes» | ⚠️ vaga |
+| 14 | revisor | «no uses columnas que no existen; calcúlalas en la consulta principal» | ⚠️ **contradictoria**: N5 y N10 necesitan calcular en una subconsulta |
+| 15 | error | referencia ambigua a department_id (usa d.department_id) | ✅ correcta |
+| 16 | error | products no tiene order_id; está en order_products/orders | ✅ correcta |
+| 17 | error | products no tiene tasa_recompra; «está en: ninguna tabla» | ⚠️ engañosa: tasa_recompra era un alias de la subconsulta (problema de alcance, no de columna) |
+
+Las 8 del revisor (⚠️ casi todas) son de antes de esta fase. Con la regla nueva, una alarma del revisor solo deja
+lección si su reintento cambia el resultado. El usuario decide cuáles se borran (🗑️ en «📓 Bitácora de
+aprendizaje»).
+
+**Alarmas del revisor sin efecto:**
+- en las pruebas: 1 (`test_alarma_del_revisor_sin_efecto_no_guarda_leccion`: el revisor marcó, el reintento dio
+  las mismas filas, no se guardó lección y el contador quedó en 1);
+- en el uso real desde esta fase: 0 alarmas (con o sin efecto). La pregunta libre de las capturas pasó el revisor
+  sin problemas.
+
+### 7. Evidencia real (llama3.1:8b, Edge con Playwright, 1440 px)
+
+Capturas en `docs/evidencia/fase31/capturas/`, generadas con `python -m scripts.capturas_fase31` (usa el Edge
+instalado: los navegadores propios de Playwright no estaban descargados):
+1. `01_botones.png`: los 10 botones.
+2. `02_n2_boton_3_iteraciones.png` (5,684 px de alto): N2 con botón, 3 intentos en autocorrección, con la línea de
+   tiempo completa (pista exacta, error exacto, por qué) y el cierre. llama3.1:8b la rechazó tras 3 intentos:
+   Binder Errors y el promedio de tasas por producto (personal care 0.90; esperado dairy eggs 0.6702).
+3. `03_pregunta_libre_sql_sano.png` (7,039 px): «¿Cuántos pedidos hay en total?» → 3,421,083, con «✅ SQL sano» y
+   el aviso de que no hay referencia.
+
+- Ninguna captura salió en blanco ni con error.
+- La primera versión del script capturaba solo la ventana: Streamlit desplaza el contenido dentro de
+  `section[data-testid=stAppScrollToBottomContainer]`. Se arregló agrandando la ventana al alto del contenido.
+- Las capturas revelaron un detalle: la misma lección se anunciaba dos veces si dos intentos fallaban igual. Se
+  corrigió: una vez por corrida.
+
+### 8. Verificación y ramas
+
+- `python -m pytest -q` (completo): `2 failed, 649 passed, 2 xpassed in 176.80s`. Es igual a la línea base: solo
+  las 2 fallas del entorno (`test_modelos_cargados_lee_api_ps`,
+  `test_construir_ficha_coincide_con_dataset_instacart_md`).
+- **Ramas:**
+  - El código de esta fase ya estaba casi todo en el commit «V7» (`c7d8d08`), que el usuario hizo a mitad del
+    trabajo. Por eso los commits de esta fase en `V7` solo traen lo que cambió después (arreglos, docs).
+  - La Fase 30b está completa en `fewshot-necesidades-negativas-matriz-tecnicas` (cherry-pick `ee7c35b`, sin
+    `--force`) y en `V7`.
