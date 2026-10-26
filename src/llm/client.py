@@ -28,6 +28,30 @@ import ollama
 MODELO_POR_DEFECTO_INSTACART = "qwen2.5-coder:1.5b"
 
 
+#: Fase 30b: ventana de contexto (tokens) de TODAS las llamadas de generación
+#: (SQL, juez, revisor, redacción), igual para cualquier técnica. Sin
+#: `num_ctx`, Ollama cargaba llama3.1:8b y qwen2.5-coder:7b con 4,096, y el
+#: prompt few_shot + bitácora llena (4,029 tokens en qwen) más la salida se
+#: pasaba: Ollama descarta el inicio del contexto (el esquema) sin avisar.
+#: Override con VENTIA_NUM_CTX; "0" = no pasarlo (el default de Ollama).
+NUM_CTX_DEFAULT = 8192
+
+
+def num_ctx() -> int | None:
+    """`num_ctx` vigente (se lee en cada llamada); None = default de Ollama."""
+    try:
+        n = int(os.environ.get("VENTIA_NUM_CTX", NUM_CTX_DEFAULT))
+    except ValueError:
+        n = NUM_CTX_DEFAULT
+    return n if n > 0 else None
+
+
+def opciones_modelo(temperatura: float) -> dict:
+    """Opciones de Ollama de cada llamada de generación."""
+    n = num_ctx()
+    return {"temperature": temperatura, **({"num_ctx": n} if n else {})}
+
+
 class LlmNoDisponible(RuntimeError):
     """Ollama no respondió (no está corriendo, o falta el modelo)."""
 
@@ -131,7 +155,7 @@ def chat_con_modelo(
                     {"role": "system", "content": sistema},
                     {"role": "user", "content": usuario},
                 ],
-                options={"temperature": temperatura},
+                options=opciones_modelo(temperatura),
                 **extra,
             )
         else:
@@ -141,7 +165,7 @@ def chat_con_modelo(
                     {"role": "system", "content": sistema},
                     {"role": "user", "content": usuario},
                 ],
-                options={"temperature": temperatura},
+                options=opciones_modelo(temperatura),
                 **extra,
             )
     except httpx.TimeoutException as exc:
@@ -184,7 +208,7 @@ def chat_con_modelo_stream(
                 {"role": "system", "content": sistema},
                 {"role": "user", "content": usuario},
             ],
-            options={"temperature": temperatura},
+            options=opciones_modelo(temperatura),
             stream=True,
         )
         for fragmento in fragmentos:

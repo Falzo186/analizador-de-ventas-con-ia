@@ -60,10 +60,23 @@ def filas_referencia(p: dict, db_path: Path = ri.DB_PATH_DEFAULT) -> list[dict]:
     return [dict(zip(columnas, f)) for f in filas]
 
 
+def calificar(p: dict, referencia: list[dict], filas: list | None) -> tuple[bool, str]:
+    """El comparador de siempre y, Fase 30b, `exigir_cifra`: en las preguntas
+    donde el identificador solo puede coincidir por casualidad (X8), la primera
+    fila debe traer además la cifra de la referencia."""
+    acierta, detalle = rf.coincide_con_forma(forma_de(p), referencia, filas)
+    if acierta and p.get("exigir_cifra"):
+        v = referencia[0][p["columna_valor"]]
+        if not any(rf._es_numero(x) and rf._cerca(float(x), float(v)) for x in (filas or [[]])[0]):
+            return False, (f"{detalle}; falta la cifra ({v}): con el nombre solo puede coincidir por casualidad "
+                           "(exigir_cifra)")
+    return acierta, detalle
+
+
 def evaluar(p: dict, tecnica: str, modelo: str, referencia: list[dict], timeout_s: float) -> dict:
     res = ri.responder_pregunta_instacart(p["pregunta"], redactar=False, modelo=modelo, tecnica=tecnica,
                                           timeout_sql_llm_s=timeout_s, timeout_respuesta_llm_s=timeout_s)
-    acierta, detalle = rf.coincide_con_forma(forma_de(p), referencia, res.filas) if res.ok else (False, res.error)
+    acierta, detalle = calificar(p, referencia, res.filas) if res.ok else (False, res.error)
     return {"acierta": acierta, "detalle": detalle, "sql": res.sql, "error": res.error,
             "ejemplos_usados": [list(u) for u in res.ejemplos_usados]}
 
