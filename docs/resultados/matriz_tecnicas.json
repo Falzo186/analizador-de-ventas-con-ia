@@ -1,5 +1,5 @@
 {
-  "generado": "2026-10-25T17:27:41-06:00",
+  "generado": "2026-10-25T20:19:00-06:00",
   "parametros": {
     "modelos": [
       "llama3.1:8b",
@@ -21,8 +21,8 @@
       "N9",
       "N10"
     ],
-    "repeticiones": 1,
-    "iteraciones": 2,
+    "repeticiones": 3,
+    "iteraciones": 3,
     "modo": "autocorreccion",
     "arbitro": "chequeo",
     "corta_al_acertar": true,
@@ -44,24 +44,73 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.54
+          3.24
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:23-06:00"
-      }
-    ],
-    "N2|llama3.1:8b|base": [
+        "timestamp": "2026-10-25T19:58:24-06:00"
+      },
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          3.11,
-          3.41
+          6.64,
+          6.14,
+          5.37
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:27-06:00"
+        "timestamp": "2026-10-25T19:58:28-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.0
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:58:46-06:00"
+      }
+    ],
+    "N2|llama3.1:8b|base": [
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.95
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:58:51-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          7.2,
+          7.11,
+          5.69
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:58:55-06:00"
+      },
+      {
+        "secuencia": "✗✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 3,
+        "segundos_por_intento": [
+          7.43,
+          5.81,
+          4.1
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:59:15-06:00"
       }
     ],
     "N3|llama3.1:8b|base": [
@@ -71,10 +120,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          5.01
+          4.11
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:33-06:00"
+        "timestamp": "2026-10-25T19:59:32-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.09
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:59:36-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.79
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:59:41-06:00"
       }
     ],
     "N4|llama3.1:8b|base": [
@@ -84,37 +155,110 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          4.73
+          4.82
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:38-06:00"
-      }
-    ],
-    "N5|llama3.1:8b|base": [
-      {
-        "secuencia": "✗✗",
-        "termina_correcto": false,
-        "acierto_1er_intento": false,
-        "convergio_en": null,
-        "segundos_por_intento": [
-          6.28,
-          6.7
-        ],
-        "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:43-06:00"
-      }
-    ],
-    "N6|llama3.1:8b|base": [
+        "timestamp": "2026-10-25T19:59:44-06:00"
+      },
       {
         "secuencia": "✓",
         "termina_correcto": true,
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          2.03
+          4.55
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:56-06:00"
+        "timestamp": "2026-10-25T19:59:49-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.61
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:59:54-06:00"
+      }
+    ],
+    "N5|llama3.1:8b|base": [
+      {
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          1.77,
+          3.68
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T19:59:58-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          3.59,
+          3.51,
+          3.52
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:04-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          3.49,
+          3.51,
+          3.69
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:15-06:00"
+      }
+    ],
+    "N6|llama3.1:8b|base": [
+      {
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          3.67,
+          1.9
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:25-06:00"
+      },
+      {
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          4.5,
+          2.05
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:31-06:00"
+      },
+      {
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          3.84,
+          2.01
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:38-06:00"
       }
     ],
     "N7|llama3.1:8b|base": [
@@ -127,76 +271,222 @@
           3.03
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:22:58-06:00"
-      }
-    ],
-    "N8|llama3.1:8b|base": [
+        "timestamp": "2026-10-25T20:00:43-06:00"
+      },
       {
         "secuencia": "✓",
         "termina_correcto": true,
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          4.28
+          2.93
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:23:01-06:00"
+        "timestamp": "2026-10-25T20:00:46-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.97
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:49-06:00"
+      }
+    ],
+    "N8|llama3.1:8b|base": [
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          2.26,
+          5.83,
+          2.25
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:00:53-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.01
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:01:03-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.31
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:01:07-06:00"
       }
     ],
     "N9|llama3.1:8b|base": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          15.27,
-          14.65
+          15.62,
+          16.84,
+          7.31
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:23:06-06:00"
+        "timestamp": "2026-10-25T20:01:11-06:00"
+      },
+      {
+        "secuencia": "✗✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 3,
+        "segundos_por_intento": [
+          15.31,
+          15.33,
+          14.28
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:01:51-06:00"
+      },
+      {
+        "secuencia": "✗✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 3,
+        "segundos_por_intento": [
+          16.92,
+          14.45,
+          14.68
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:02:36-06:00"
       }
     ],
     "N10|llama3.1:8b|base": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          4.05,
-          4.12
+          5.14,
+          5.51,
+          5.27
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:23:35-06:00"
+        "timestamp": "2026-10-25T20:03:22-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          2.99,
+          8.76,
+          3.39
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:03:38-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          3.86,
+          3.68,
+          3.71
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:03:53-06:00"
       }
     ],
     "N1|llama3.1:8b|few_shot": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.02
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:04:05-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          6.58,
-          7.18
+          8.01,
+          6.08,
+          7.23
         ],
         "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
-        "timestamp": "2026-10-25T17:23:44-06:00"
+        "timestamp": "2026-10-25T20:04:08-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.97
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:04:29-06:00"
       }
     ],
     "N2|llama3.1:8b|few_shot": [
       {
-        "secuencia": "✗✗",
-        "termina_correcto": false,
-        "acierto_1er_intento": false,
-        "convergio_en": null,
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
         "segundos_por_intento": [
-          4.29,
-          6.02
+          4.41
         ],
         "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
-        "timestamp": "2026-10-25T17:23:57-06:00"
+        "timestamp": "2026-10-25T20:04:32-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.66
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:04:37-06:00"
+      },
+      {
+        "secuencia": "✗✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 3,
+        "segundos_por_intento": [
+          6.95,
+          6.46,
+          4.38
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:04:41-06:00"
       }
     ],
     "N3|llama3.1:8b|few_shot": [
@@ -209,7 +499,29 @@
           4.09
         ],
         "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
-        "timestamp": "2026-10-25T17:24:08-06:00"
+        "timestamp": "2026-10-25T20:04:59-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.74
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:05:03-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.95
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:05:07-06:00"
       }
     ],
     "N4|llama3.1:8b|few_shot": [
@@ -219,10 +531,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          4.36
+          4.32
         ],
         "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
-        "timestamp": "2026-10-25T17:24:12-06:00"
+        "timestamp": "2026-10-25T20:05:11-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.21
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:05:15-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.25
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:05:20-06:00"
       }
     ],
     "N5|llama3.1:8b|few_shot": [
@@ -232,10 +566,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          2.52
+          2.63
         ],
         "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
-        "timestamp": "2026-10-25T17:24:16-06:00"
+        "timestamp": "2026-10-25T20:05:24-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.29
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:05:27-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.39
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:05:29-06:00"
       }
     ],
     "N6|llama3.1:8b|few_shot": [
@@ -245,10 +601,33 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          2.05
+          2.08
         ],
         "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
-        "timestamp": "2026-10-25T17:24:19-06:00"
+        "timestamp": "2026-10-25T20:05:31-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.87
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:05:34-06:00"
+      },
+      {
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          4.56,
+          2.1
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:05:35-06:00"
       }
     ],
     "N7|llama3.1:8b|few_shot": [
@@ -258,10 +637,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.41
+          3.44
         ],
         "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
-        "timestamp": "2026-10-25T17:24:21-06:00"
+        "timestamp": "2026-10-25T20:05:42-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.62
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:05:46-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.39
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:05:49-06:00"
       }
     ],
     "N8|llama3.1:8b|few_shot": [
@@ -271,38 +672,112 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          2.4
+          3.08
         ],
         "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
-        "timestamp": "2026-10-25T17:24:24-06:00"
+        "timestamp": "2026-10-25T20:05:53-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.08
+        ],
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:05:56-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.36
+        ],
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:05:59-06:00"
       }
     ],
     "N9|llama3.1:8b|few_shot": [
       {
-        "secuencia": "✗✓",
+        "secuencia": "✗✗✓",
         "termina_correcto": true,
         "acierto_1er_intento": false,
-        "convergio_en": 2,
+        "convergio_en": 3,
         "segundos_por_intento": [
-          14.04,
-          14.08
+          17.78,
+          9.52,
+          15.98
         ],
         "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
-        "timestamp": "2026-10-25T17:24:27-06:00"
-      }
-    ],
-    "N10|llama3.1:8b|few_shot": [
+        "timestamp": "2026-10-25T20:06:02-06:00"
+      },
       {
         "secuencia": "✗✓",
         "termina_correcto": true,
         "acierto_1er_intento": false,
         "convergio_en": 2,
         "segundos_por_intento": [
-          5.73,
-          4.84
+          17.89,
+          17.27
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:06:46-06:00"
+      },
+      {
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          20.38,
+          16.55
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:07:21-06:00"
+      }
+    ],
+    "N10|llama3.1:8b|few_shot": [
+      {
+        "secuencia": "✗✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 3,
+        "segundos_por_intento": [
+          8.3,
+          9.27,
+          4.53
         ],
         "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
-        "timestamp": "2026-10-25T17:24:55-06:00"
+        "timestamp": "2026-10-25T20:07:58-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          8.4,
+          6.43,
+          7.59
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:08:20-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          5.5,
+          5.7,
+          5.77
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:08:43-06:00"
       }
     ],
     "N1|qwen2.5-coder:latest|base": [
@@ -312,24 +787,70 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          17.76
+          9.82
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:25:06-06:00"
+        "timestamp": "2026-10-25T20:09:00-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.09
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:09:09-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.16
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:09:13-06:00"
       }
     ],
     "N2|qwen2.5-coder:latest|base": [
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          7.15,
+          6.85,
+          6.86
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:09:16-06:00"
+      },
       {
         "secuencia": "✗✓",
         "termina_correcto": true,
         "acierto_1er_intento": false,
         "convergio_en": 2,
         "segundos_por_intento": [
-          7.48,
-          3.1
+          6.81,
+          2.99
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:25:24-06:00"
+        "timestamp": "2026-10-25T20:09:37-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.83
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:09:47-06:00"
       }
     ],
     "N3|qwen2.5-coder:latest|base": [
@@ -339,38 +860,109 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          4.31
+          4.4
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:25:34-06:00"
+        "timestamp": "2026-10-25T20:09:50-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.95
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:09:55-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          7.11
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:10:01-06:00"
       }
     ],
     "N4|qwen2.5-coder:latest|base": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          8.1,
-          10.33
+          6.85,
+          6.74,
+          8.69
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:25:39-06:00"
+        "timestamp": "2026-10-25T20:10:08-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.06
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:10:30-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          6.52
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:10:35-06:00"
       }
     ],
     "N5|qwen2.5-coder:latest|base": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": false,
+        "convergio_en": 2,
+        "segundos_por_intento": [
+          3.95,
+          2.31
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:10:42-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          4.13,
-          3.39
+          3.8,
+          6.4,
+          3.92
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:25:57-06:00"
+        "timestamp": "2026-10-25T20:10:48-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          3.64,
+          4.23,
+          3.73
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:03-06:00"
       }
     ],
     "N6|qwen2.5-coder:latest|base": [
@@ -380,10 +972,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          1.81
+          1.89
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:26:05-06:00"
+        "timestamp": "2026-10-25T20:11:14-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.82
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:16-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.76
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:18-06:00"
       }
     ],
     "N7|qwen2.5-coder:latest|base": [
@@ -393,10 +1007,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.32
+          3.56
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:26:06-06:00"
+        "timestamp": "2026-10-25T20:11:20-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.0
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:23-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.11
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:27-06:00"
       }
     ],
     "N8|qwen2.5-coder:latest|base": [
@@ -406,10 +1042,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.06
+          3.32
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:26:10-06:00"
+        "timestamp": "2026-10-25T20:11:30-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.25
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:33-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.29
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:35-06:00"
       }
     ],
     "N9|qwen2.5-coder:latest|base": [
@@ -419,24 +1077,73 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          14.72
+          17.92
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:26:13-06:00"
+        "timestamp": "2026-10-25T20:11:38-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          18.05
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:11:56-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          16.3
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:12:14-06:00"
       }
     ],
     "N10|qwen2.5-coder:latest|base": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          5.53,
-          5.86
+          4.4,
+          3.8,
+          7.08
         ],
         "ejemplos_intento_1": "ninguno",
-        "timestamp": "2026-10-25T17:26:28-06:00"
+        "timestamp": "2026-10-25T20:12:30-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          4.31,
+          4.92,
+          5.31
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:12:45-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          4.55,
+          6.02,
+          5.72
+        ],
+        "ejemplos_intento_1": "ninguno",
+        "timestamp": "2026-10-25T20:13:00-06:00"
       }
     ],
     "N1|qwen2.5-coder:latest|few_shot": [
@@ -446,10 +1153,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.85
+          3.2
         ],
         "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
-        "timestamp": "2026-10-25T17:26:39-06:00"
+        "timestamp": "2026-10-25T20:13:16-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.86
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:13:20-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.1
+        ],
+        "ejemplos_intento_1": "N1-neg-1 (sim 0.46)",
+        "timestamp": "2026-10-25T20:13:23-06:00"
       }
     ],
     "N2|qwen2.5-coder:latest|few_shot": [
@@ -459,10 +1188,34 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.02
+          3.24
         ],
         "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
-        "timestamp": "2026-10-25T17:26:43-06:00"
+        "timestamp": "2026-10-25T20:13:26-06:00"
+      },
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          5.74,
+          5.2,
+          5.56
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:13:29-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.96
+        ],
+        "ejemplos_intento_1": "N2-neg-2 (sim 0.56), N3-neg-1 (sim 0.54)",
+        "timestamp": "2026-10-25T20:13:46-06:00"
       }
     ],
     "N3|qwen2.5-coder:latest|few_shot": [
@@ -472,10 +1225,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          4.84
+          7.25
         ],
         "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
-        "timestamp": "2026-10-25T17:26:46-06:00"
+        "timestamp": "2026-10-25T20:13:49-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.62
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:13:56-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          5.31
+        ],
+        "ejemplos_intento_1": "N3-neg-1 (sim 0.66), N4-neg-1 (sim 0.52)",
+        "timestamp": "2026-10-25T20:14:02-06:00"
       }
     ],
     "N4|qwen2.5-coder:latest|few_shot": [
@@ -485,10 +1260,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          4.51
+          4.78
         ],
         "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
-        "timestamp": "2026-10-25T17:26:51-06:00"
+        "timestamp": "2026-10-25T20:14:07-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.92
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:14:12-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          3.99
+        ],
+        "ejemplos_intento_1": "N4-neg-1 (sim 0.69), N4-neg-2 (sim 0.64)",
+        "timestamp": "2026-10-25T20:14:16-06:00"
       }
     ],
     "N5|qwen2.5-coder:latest|few_shot": [
@@ -498,10 +1295,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          2.23
+          2.26
         ],
         "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
-        "timestamp": "2026-10-25T17:26:56-06:00"
+        "timestamp": "2026-10-25T20:14:20-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.18
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:14:22-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.08
+        ],
+        "ejemplos_intento_1": "N5-neg-1 (sim 0.83), N5-neg-2 (sim 0.62)",
+        "timestamp": "2026-10-25T20:14:24-06:00"
       }
     ],
     "N6|qwen2.5-coder:latest|few_shot": [
@@ -511,10 +1330,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          1.77
+          1.71
         ],
         "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
-        "timestamp": "2026-10-25T17:26:58-06:00"
+        "timestamp": "2026-10-25T20:14:26-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.81
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:14:28-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.66
+        ],
+        "ejemplos_intento_1": "N6-neg-1 (sim 0.59)",
+        "timestamp": "2026-10-25T20:14:30-06:00"
       }
     ],
     "N7|qwen2.5-coder:latest|few_shot": [
@@ -524,10 +1365,32 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          2.34
+          2.36
         ],
         "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
-        "timestamp": "2026-10-25T17:27:00-06:00"
+        "timestamp": "2026-10-25T20:14:32-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.92
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:14:34-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          2.3
+        ],
+        "ejemplos_intento_1": "N7-neg-1 (sim 0.69), N5-neg-2 (sim 0.40)",
+        "timestamp": "2026-10-25T20:14:37-06:00"
       }
     ],
     "N8|qwen2.5-coder:latest|few_shot": [
@@ -537,466 +1400,615 @@
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          3.17
+          1.92
         ],
         "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
-        "timestamp": "2026-10-25T17:27:02-06:00"
-      }
-    ],
-    "N9|qwen2.5-coder:latest|few_shot": [
+        "timestamp": "2026-10-25T20:14:40-06:00"
+      },
       {
         "secuencia": "✓",
         "termina_correcto": true,
         "acierto_1er_intento": true,
         "convergio_en": 1,
         "segundos_por_intento": [
-          16.03
+          2.76
         ],
-        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
-        "timestamp": "2026-10-25T17:27:05-06:00"
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:14:42-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          1.94
+        ],
+        "ejemplos_intento_1": "N8-neg-1 (sim 0.85)",
+        "timestamp": "2026-10-25T20:14:44-06:00"
       }
     ],
-    "N10|qwen2.5-coder:latest|few_shot": [
+    "N9|qwen2.5-coder:latest|few_shot": [
       {
-        "secuencia": "✗✗",
+        "secuencia": "✗✗✗",
         "termina_correcto": false,
         "acierto_1er_intento": false,
         "convergio_en": null,
         "segundos_por_intento": [
-          10.13,
-          9.94
+          3.61,
+          4.22,
+          3.69
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:14:46-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          18.1
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:14:58-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          13.1
+        ],
+        "ejemplos_intento_1": "N9-neg-1 (sim 0.66)",
+        "timestamp": "2026-10-25T20:18:19-06:00"
+      }
+    ],
+    "N10|qwen2.5-coder:latest|few_shot": [
+      {
+        "secuencia": "✗✗✗",
+        "termina_correcto": false,
+        "acierto_1er_intento": false,
+        "convergio_en": null,
+        "segundos_por_intento": [
+          5.68,
+          5.56,
+          5.45
         ],
         "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
-        "timestamp": "2026-10-25T17:27:21-06:00"
+        "timestamp": "2026-10-25T20:18:32-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          6.65
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:18:48-06:00"
+      },
+      {
+        "secuencia": "✓",
+        "termina_correcto": true,
+        "acierto_1er_intento": true,
+        "convergio_en": 1,
+        "segundos_por_intento": [
+          4.42
+        ],
+        "ejemplos_intento_1": "N10-neg-2 (sim 0.79), N5-neg-1 (sim 0.57)",
+        "timestamp": "2026-10-25T20:18:55-06:00"
       }
     ]
   },
   "celdas": {
     "N1|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.5,
+      "seg_medio_intento": 5.3,
       "secuencias": [
+        "✓",
+        "✗✗✗",
         "✓"
       ]
     },
     "N2|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
-      "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 3.3,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 1,
+      "intento_medio_convergencia": 2,
+      "seg_medio_intento": 5.9,
       "secuencias": [
-        "✗✗"
+        "✓",
+        "✗✗✗",
+        "✗✗✓"
       ]
     },
     "N3|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 5.0,
+      "seg_medio_intento": 4.0,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N4|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
       "seg_medio_intento": 4.7,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N5|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
+      "repeticiones": 3,
+      "termina_correcto": 1,
       "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 6.5,
+      "intento_medio_convergencia": 2,
+      "seg_medio_intento": 3.3,
       "secuencias": [
-        "✗✗"
+        "✗✓",
+        "✗✗✗",
+        "✗✗✗"
       ]
     },
     "N6|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
-      "intento_medio_convergencia": 1,
-      "seg_medio_intento": 2.0,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 0,
+      "intento_medio_convergencia": 2,
+      "seg_medio_intento": 3.0,
       "secuencias": [
-        "✓"
+        "✗✓",
+        "✗✓",
+        "✗✓"
       ]
     },
     "N7|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
       "seg_medio_intento": 3.0,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N8|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 4.3,
+      "seg_medio_intento": 3.7,
       "secuencias": [
+        "✗✗✗",
+        "✓",
         "✓"
       ]
     },
     "N9|llama3.1:8b|base": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
+      "repeticiones": 3,
+      "termina_correcto": 2,
       "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 15.0,
+      "intento_medio_convergencia": 3,
+      "seg_medio_intento": 14.5,
       "secuencias": [
-        "✗✗"
+        "✗✗✗",
+        "✗✗✓",
+        "✗✗✓"
       ]
     },
     "N10|llama3.1:8b|base": {
-      "repeticiones": 1,
+      "repeticiones": 3,
       "termina_correcto": 0,
       "acierto_1er_intento": 0,
       "intento_medio_convergencia": null,
-      "seg_medio_intento": 4.1,
+      "seg_medio_intento": 4.7,
       "secuencias": [
-        "✗✗"
+        "✗✗✗",
+        "✗✗✗",
+        "✗✗✗"
       ]
     },
     "N1|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
-      "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 6.9,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 5.5,
       "secuencias": [
-        "✗✗"
+        "✓",
+        "✗✗✗",
+        "✓"
       ]
     },
     "N2|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
-      "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 5.2,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1.67,
+      "seg_medio_intento": 5.4,
       "secuencias": [
-        "✗✗"
+        "✓",
+        "✓",
+        "✗✗✓"
       ]
     },
     "N3|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 4.1,
+      "seg_medio_intento": 3.9,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N4|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 4.4,
+      "seg_medio_intento": 4.3,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N5|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 2.5,
+      "seg_medio_intento": 2.4,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N6|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
-      "intento_medio_convergencia": 1,
-      "seg_medio_intento": 2.0,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1.33,
+      "seg_medio_intento": 2.7,
       "secuencias": [
-        "✓"
+        "✓",
+        "✓",
+        "✗✓"
       ]
     },
     "N7|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.4,
+      "seg_medio_intento": 3.5,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N8|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 2.4,
+      "seg_medio_intento": 3.2,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N9|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
       "acierto_1er_intento": 0,
-      "intento_medio_convergencia": 2,
-      "seg_medio_intento": 14.1,
+      "intento_medio_convergencia": 2.33,
+      "seg_medio_intento": 16.5,
       "secuencias": [
+        "✗✗✓",
+        "✗✓",
         "✗✓"
       ]
     },
     "N10|llama3.1:8b|few_shot": {
-      "repeticiones": 1,
+      "repeticiones": 3,
       "termina_correcto": 1,
       "acierto_1er_intento": 0,
-      "intento_medio_convergencia": 2,
-      "seg_medio_intento": 5.3,
+      "intento_medio_convergencia": 3,
+      "seg_medio_intento": 6.8,
       "secuencias": [
-        "✗✓"
+        "✗✗✓",
+        "✗✗✗",
+        "✗✗✗"
       ]
     },
     "N1|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 17.8,
+      "seg_medio_intento": 5.4,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N2|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 0,
-      "intento_medio_convergencia": 2,
-      "seg_medio_intento": 5.3,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 1,
+      "intento_medio_convergencia": 1.5,
+      "seg_medio_intento": 5.7,
       "secuencias": [
-        "✗✓"
+        "✗✗✗",
+        "✗✓",
+        "✓"
       ]
     },
     "N3|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 4.3,
+      "seg_medio_intento": 5.8,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N4|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
-      "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 9.2,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 6.8,
       "secuencias": [
-        "✗✗"
+        "✗✗✗",
+        "✓",
+        "✓"
       ]
     },
     "N5|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
+      "repeticiones": 3,
+      "termina_correcto": 1,
       "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 3.8,
+      "intento_medio_convergencia": 2,
+      "seg_medio_intento": 4.0,
       "secuencias": [
-        "✗✗"
+        "✗✓",
+        "✗✗✗",
+        "✗✗✗"
       ]
     },
     "N6|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
       "seg_medio_intento": 1.8,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N7|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.3,
+      "seg_medio_intento": 3.2,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N8|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.1,
+      "seg_medio_intento": 2.6,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N9|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 14.7,
+      "seg_medio_intento": 17.4,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N10|qwen2.5-coder:latest|base": {
-      "repeticiones": 1,
+      "repeticiones": 3,
       "termina_correcto": 0,
       "acierto_1er_intento": 0,
       "intento_medio_convergencia": null,
-      "seg_medio_intento": 5.7,
+      "seg_medio_intento": 5.1,
       "secuencias": [
-        "✗✗"
+        "✗✗✗",
+        "✗✗✗",
+        "✗✗✗"
       ]
     },
     "N1|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.9,
+      "seg_medio_intento": 3.1,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N2|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.0,
+      "seg_medio_intento": 4.5,
       "secuencias": [
+        "✓",
+        "✗✗✗",
         "✓"
       ]
     },
     "N3|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 4.8,
+      "seg_medio_intento": 6.1,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N4|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 4.5,
+      "seg_medio_intento": 4.2,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N5|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
       "seg_medio_intento": 2.2,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N6|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 1.8,
+      "seg_medio_intento": 1.7,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N7|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 2.3,
+      "seg_medio_intento": 2.5,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N8|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 3,
+      "acierto_1er_intento": 3,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 3.2,
+      "seg_medio_intento": 2.2,
       "secuencias": [
+        "✓",
+        "✓",
         "✓"
       ]
     },
     "N9|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 1,
-      "acierto_1er_intento": 1,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
       "intento_medio_convergencia": 1,
-      "seg_medio_intento": 16.0,
+      "seg_medio_intento": 8.5,
       "secuencias": [
+        "✗✗✗",
+        "✓",
         "✓"
       ]
     },
     "N10|qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 1,
-      "termina_correcto": 0,
-      "acierto_1er_intento": 0,
-      "intento_medio_convergencia": null,
-      "seg_medio_intento": 10.0,
+      "repeticiones": 3,
+      "termina_correcto": 2,
+      "acierto_1er_intento": 2,
+      "intento_medio_convergencia": 1,
+      "seg_medio_intento": 5.6,
       "secuencias": [
-        "✗✗"
+        "✗✗✗",
+        "✓",
+        "✓"
       ]
     }
   },
   "totales": {
     "llama3.1:8b|base": {
-      "repeticiones": 10,
-      "termina_correcto": 6,
-      "acierto_1er_intento": 6,
-      "seg_medio_intento": 5.1
+      "repeticiones": 30,
+      "termina_correcto": 21,
+      "acierto_1er_intento": 14,
+      "seg_medio_intento": 5.2
     },
     "llama3.1:8b|few_shot": {
-      "repeticiones": 10,
-      "termina_correcto": 8,
-      "acierto_1er_intento": 6,
-      "seg_medio_intento": 5.0
+      "repeticiones": 30,
+      "termina_correcto": 27,
+      "acierto_1er_intento": 21,
+      "seg_medio_intento": 5.4
     },
     "qwen2.5-coder:latest|base": {
-      "repeticiones": 10,
-      "termina_correcto": 7,
-      "acierto_1er_intento": 6,
-      "seg_medio_intento": 6.9
+      "repeticiones": 30,
+      "termina_correcto": 23,
+      "acierto_1er_intento": 21,
+      "seg_medio_intento": 5.8
     },
     "qwen2.5-coder:latest|few_shot": {
-      "repeticiones": 10,
-      "termina_correcto": 9,
-      "acierto_1er_intento": 9,
-      "seg_medio_intento": 5.2
+      "repeticiones": 30,
+      "termina_correcto": 27,
+      "acierto_1er_intento": 27,
+      "seg_medio_intento": 4.1
     }
   }
 }

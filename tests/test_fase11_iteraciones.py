@@ -329,7 +329,8 @@ def test_formato_json_solo_cuando_se_pide(monkeypatch, timeout_s):
     client.chat_con_modelo("m", "s", "u", timeout_s=timeout_s, formato_json=True, temperatura=0.0)
     assert "format" not in falso.kwargs[0]
     assert falso.kwargs[1]["format"] == "json"
-    assert falso.kwargs[0]["options"] == {"temperature": 0.0}
+    # Fase 30b: todas las llamadas llevan además num_ctx (8192 por defecto).
+    assert falso.kwargs[0]["options"] == {"temperature": 0.0, "num_ctx": client.NUM_CTX_DEFAULT}
 
 
 def test_timeout_del_juez_es_el_de_respuesta_por_defecto(parchear):
